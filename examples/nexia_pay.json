@@ -1,0 +1,14 @@
+{
+  "name": "Nexia Pay",
+  "one_liner": "plataforma de antecipação de recebíveis para lojistas brasileiros via PIX e cartão",
+  "categories": ["fintech", "payments"],
+  "business_model": "SaaS",
+  "country": "Brazil",
+  "founded_year": "2023",
+  "team_size": "18",
+  "stage": "seed",
+  "main_concern": "Unit Economics",
+  "secondary_concerns": ["Cash Burn", "Regulatory Risk"],
+  "notes": "Fundada em 2023. Levantamos BRL 4M em seed. Preocupação com CAC alto e retenção baixa no segmento de lojistas pequenos e com exposição regulatória (LGPD + BACEN).",
+  "total_funding": "BRL 4M"
+}

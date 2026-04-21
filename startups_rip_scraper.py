@@ -911,6 +911,51 @@ def export_summary(G: nx.DiGraph, companies: list, path: str):
     return summary
 
 
+def slug_looks_valid(slug: str) -> bool:
+    """Evita ruído do discover_hidden (batch codes, URLs genéricas)."""
+    if not slug or not isinstance(slug, str):
+        return False
+    s = slug.strip().strip("/")
+    if len(s) < 3 or len(s) > 80:
+        return False
+    if not re.match(r"^[a-z0-9][a-z0-9-]*$", s):
+        return False
+    if s.startswith("yc-"):
+        return False
+    if re.match(r"^[wsf]\d{2}$", s, re.I):
+        return False
+    block = {"sign-in", "sign-up", "login", "browse", "about", "privacy", "terms"}
+    if s in block:
+        return False
+    return True
+
+
+def extra_slugs_from_discovered_json() -> list[str]:
+    """Empresas com página real em /company/… listadas em discover_hidden mas fora do sitemap."""
+    path = os.path.join(OUTPUT_DIR, "all_discovered_companies.json")
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            disc = json.load(f)
+    except Exception as e:
+        log.warning("all_discovered_companies.json: %s", e)
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in disc:
+        if not item.get("has_page"):
+            continue
+        slug = (item.get("slug") or "").strip().strip("/")
+        if not slug_looks_valid(slug) or slug in seen:
+            continue
+        seen.add(slug)
+        out.append(slug)
+    if out:
+        log.info("Candidatos discover (has_page, all_discovered_companies.json): %d", len(out))
+    return out
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 async def async_main():
@@ -938,7 +983,15 @@ async def async_main():
     company_slugs = list(dict.fromkeys(
         url.split("/company/")[-1].strip("/") for url in urls["companies"] if "/company/" in url
     ))
-    log.info(f"Slugs únicos: {len(company_slugs)}")
+    n_sitemap = len(company_slugs)
+    extra = extra_slugs_from_discovered_json()
+    company_slugs = list(dict.fromkeys(company_slugs + extra))
+    log.info(
+        "Slugs únicos: %d (sitemap %d + novos via discover: %d)",
+        len(company_slugs),
+        n_sitemap,
+        len(company_slugs) - n_sitemap,
+    )
 
     # 2. Taxonomias (requests, sem JS)
     log.info("Fase 2: Categorias e batches...")

@@ -1,7 +1,17 @@
-requests
-beautifulsoup4
-lxml
-playwright
-networkx
-matplotlib
-pyvis
+# ─── Data collection (scrapers) ───────────────────────────────────────────────
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+playwright>=1.41
+
+# ─── Matching & analytics ─────────────────────────────────────────────────────
+numpy>=1.26
+scikit-learn>=1.4
+sentence-transformers>=2.5
+
+# ─── Graph ────────────────────────────────────────────────────────────────────
+networkx>=3.2
+
+# ─── Visualization (optional; only needed if you run the viewers) ─────────────
+matplotlib>=3.8
+pyvis>=0.3.2

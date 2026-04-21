@@ -1,14 +1,22 @@
-# Data output (large files)
+# ─── Data output (large files, regenerated from scrapers) ─────────────────────
 output/*.json
 output/*.csv
 output/*.gexf
 output/*.html
 output/*.txt
+output/*.log
+output/*.npz
+output/*.npy
 
-# Keep the output directory
+# Keep the output directory structure
 !output/.gitkeep
 
-# Python
+# Saídas geradas em runtime (relatórios, filas, emails)
+output/consultorias/
+output/email_outbox/
+output/_probe/
+
+# ─── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -18,18 +26,29 @@ build/
 .eggs/
 *.egg
 
-# Virtual environment
+# ─── Node / frontend viewers ─────────────────────────────────────────────────
+node_modules/
+*/dist/
+*/node_modules/
+
+# ─── Virtual environment ─────────────────────────────────────────────────────
 venv/
 .venv/
 env/
 
-# IDE
+# ─── IDE ─────────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS
+# ─── OS ──────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ─── Secrets / local config ──────────────────────────────────────────────────
+.env
+.env.local
+*.secret
+

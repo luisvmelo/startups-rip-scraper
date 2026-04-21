@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cosmograph — startups_graph.json</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root {
+        --bg: #0b0a09;
+        --panel: #141210;
+        --text: #f2efe9;
+        --muted: #8a8478;
+        --border: #2a2620;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      #app {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      header {
+        flex-shrink: 0;
+        padding: 0.5rem 0.75rem;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        font-size: 0.82rem;
+      }
+      header h1 {
+        margin: 0 0 0.35rem;
+        font-size: 1rem;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 0.78rem;
+        line-height: 1.45;
+      }
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 1rem;
+        margin-top: 0.5rem;
+        align-items: center;
+      }
+      .toolbar label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        cursor: pointer;
+      }
+      .toolbar select,
+      .toolbar button {
+        background: #1e1c18;
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.3rem 0.55rem;
+        font-size: 0.8rem;
+        cursor: pointer;
+      }
+      #cosmo-root {
+        flex: 1;
+        min-height: 200px;
+        position: relative;
+      }
+      #status {
+        flex-shrink: 0;
+        padding: 0.35rem 0.75rem;
+        font-size: 0.75rem;
+        color: var(--muted);
+        border-top: 1px solid var(--border);
+        background: var(--panel);
+      }
+      #status.err {
+        color: #f66;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>Cosmograph (local)</h1>
+        <p class="hint">
+          Motor <strong>Cosmos.gl</strong> + layout GPU. Dados:
+          <code>../output/startups_graph.json</code> (via Vite). Licença Cosmograph:
+          <a href="https://creativecommons.org/licenses/by-nc/4.0/" rel="noopener">CC-BY-NC-4.0</a> (não comercial sem acordo).
+          Outros viewers:
+          <a href="http://127.0.0.1:8765/graph-viewer/">vis-network</a>
+          ·
+          <a href="http://127.0.0.1:8765/graph-viewer/force-view.html">3d-force-graph</a>
+        </p>
+        <div class="toolbar">
+          <label title="Apenas nós company, sem arestas — máxima fluidez.">
+            <input type="checkbox" id="companiesOnly" />
+            Só empresas
+          </label>
+          <label>
+            <input type="checkbox" id="filterSections" checked />
+            Ocultar relatório
+          </label>
+          <label>
+            <input type="checkbox" id="lightMode" checked />
+            Ocultar category / location / macro
+          </label>
+          <label>
+            <input type="checkbox" id="skipHeavyEdges" checked />
+            Cortar arestas fonte (FROM_SOURCE / HAS_DATA_SOURCE)
+          </label>
+          <label>
+            Máx. arestas
+            <select id="maxLinks">
+              <option value="0">Sem limite</option>
+              <option value="40000">40k</option>
+              <option value="80000" selected>80k</option>
+              <option value="120000">120k</option>
+            </select>
+          </label>
+          <button type="button" id="btnReload">Recarregar</button>
+        </div>
+      </header>
+      <div id="cosmo-root"></div>
+      <div id="status">A iniciar…</div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

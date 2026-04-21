@@ -1,0 +1,14 @@
+{
+  "name": "Fibbo",
+  "one_liner": "fintech brasileira de pagamentos B2B",
+  "categories": ["fintech", "payments"],
+  "business_model": "SaaS",
+  "country": "Brazil",
+  "founded_year": "2022",
+  "team_size": "12",
+  "stage": "seed",
+  "main_concern": "Bad Business Model",
+  "secondary_concerns": ["Mismanagement of Funds"],
+  "notes": "Fundada em 2022. Levantamos USD 1.5M em rodada seed e temos 12 funcionários. Preocupação: unit economics e CAC alto no segmento de lojistas pequenos.",
+  "total_funding": "USD 1.5M"
+}

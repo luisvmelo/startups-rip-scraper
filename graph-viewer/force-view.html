@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Grafo WebGL — 3d-force-graph</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      .force-page {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        margin: 0;
+      }
+      .force-page header {
+        flex-shrink: 0;
+      }
+      #graph {
+        flex: 1;
+        min-height: 280px;
+        width: 100%;
+        position: relative;
+        touch-action: none;
+      }
+      .force-page #status {
+        flex-shrink: 0;
+      }
+    </style>
+  </head>
+  <body class="force-page">
+    <header>
+      <h1>Grafo WebGL (<code>3d-force-graph</code> + Three.js)</h1>
+      <span class="hint"
+        >Vista <strong>3D</strong> com WebGL — arrasta com o rato para rodar o grafo. Escala muito melhor que
+        vis-network para muitos vértices. Mesmo JSON: <code>output/startups_graph.json</code>. Voltar:
+        <a href="index.html">visualizador 2D (vis-network)</a>. Rede na 1.ª carga (CDN
+        <code>esm.sh</code>).</span
+      >
+      <div class="toolbar">
+        <label title="Só empresas, sem arestas — máxima fluidez.">
+          <input type="checkbox" id="companiesOnly" />
+          Só empresas (sem arestas)
+        </label>
+        <label>
+          <input type="checkbox" id="filterSections" checked />
+          Ocultar relatório
+        </label>
+        <label>
+          <input type="checkbox" id="lightMode" checked />
+          Ocultar category / location / macro
+        </label>
+        <label title="Remove ~9k arestas empresa↔fonte (FROM_SOURCE / HAS_DATA_SOURCE).">
+          <input type="checkbox" id="skipHeavyEdges" checked />
+          Cortar arestas “fonte”
+        </label>
+        <label>
+          Máx. arestas
+          <select id="maxLinks">
+            <option value="0">Sem limite</option>
+            <option value="25000">25k</option>
+            <option value="50000" selected>50k (recomendado)</option>
+            <option value="75000">75k</option>
+            <option value="100000">100k</option>
+          </select>
+        </label>
+        <label title="Para o motor de forças após o layout — menos CPU/GPU ao mover o rato.">
+          <input type="checkbox" id="pauseAfterStab" checked />
+          Pausar ao estabilizar
+        </label>
+        <button type="button" id="btnFit">Encaixar</button>
+        <button type="button" id="btnResume">Retomar física</button>
+        <button type="button" id="btnReload">Recarregar</button>
+      </div>
+    </header>
+    <div id="graph" aria-label="Grafo WebGL"></div>
+    <div id="side" style="max-height: 180px; border-top: 1px solid var(--border); flex-shrink: 0">
+      <h2 style="margin: 0.35rem 0.5rem; font-size: 0.85rem">Nó selecionado</h2>
+      <p id="sideEmpty" class="hint" style="margin: 0.25rem 0.5rem">Clique num nó.</p>
+      <pre id="sideJson" hidden style="max-height: 120px; margin: 0.25rem 0.5rem"></pre>
+    </div>
+    <div id="status">Carregando…</div>
+    <script type="module" src="force-view.mjs"></script>
+  </body>
+</html>

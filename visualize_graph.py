@@ -28,6 +28,9 @@ COLORS = {
     "report_section": "#8B572A",
     "report_subsection": "#C4A882",
     "site": "#FFFFFF",
+    "outcome": "#00A896",
+    "data_source": "#5C6BC0",
+    "macro": "#AB47BC",
     "unknown": "#999999",
 }
 
@@ -54,11 +57,10 @@ with open(GRAPH_PATH, "r", encoding="utf-8") as f:
 edges_key = "links" if "links" in data else "edges"
 print(f"  Nos: {len(data['nodes'])}, Arestas: {len(data[edges_key])}")
 
-# O grafo completo tem ~2000 nos que e pesado pro browser.
-# Vamos criar 2 versoes: resumida (sem sections/subsections) e completa.
+# Corpus multi-fonte: milhares de empresas + muitas categorias/locais.
+# Inclui TODAS as empresas; omite só nós muito numerosos para o HTML pyvis não engasgar.
 
-# --- Versao principal: sem report_section/report_subsection (mais leve) ---
-print("Gerando grafo interativo (sem secoes de report)...")
+print("Gerando grafo interativo (todas as empresas; sem seções de relatório / category / location / macro)...")
 
 net = Network(
     height="100vh",
@@ -78,12 +80,13 @@ net.barnes_hut(
     damping=0.09,
 )
 
-# Filtrar nos (remover sections e subsections para legibilidade)
-skip_types = {"report_section", "report_subsection", "build_plan"}
+skip_types = {"report_section", "report_subsection", "build_plan", "category", "location", "macro"}
 included_ids = set()
+type_counts = {}
 
 for node in data["nodes"]:
     ntype = node.get("type", "unknown")
+    type_counts[ntype] = type_counts.get(ntype, 0) + 1
     if ntype in skip_types:
         continue
 
@@ -136,6 +139,12 @@ edge_colors = {
     "RELATED_TO": "#4A90D966",
     "COMPETES_WITH": "#FF6B6B88",
     "FOLLOWED_BY": "#7ED32133",
+    "FROM_SOURCE": "#5C6BC066",
+    "HAS_OUTCOME": "#00A89666",
+    "HAS_OUTCOME_TYPE": "#00A89633",
+    "HAS_DATA_SOURCE": "#5C6BC033",
+    "HAS_CATEGORY_MACRO": "#AB47BC44",
+    "HAS_MACRO_TAG": "#AB47BC33",
 }
 
 for link in data[edges_key]:
@@ -146,25 +155,30 @@ for link in data[edges_key]:
         color = edge_colors.get(rel, "#FFFFFF22")
         net.add_edge(src, tgt, title=rel, color=color, arrows="to")
 
-print(f"  Nos no grafo visual: {len(included_ids)}")
+nc = type_counts.get("company", 0)
+print(f"  Nos no grafo visual: {len(included_ids)} (empresas incluidas: {nc})")
 print(f"Salvando HTML...")
 
 net.save_graph(HTML_PATH)
 
+def _c(label, ntype):
+    return f'<span style="color:{COLORS.get(ntype, "#999")};">&#9679;</span> {label} ({type_counts.get(ntype, 0)})<br>'
+
 # Injetar legenda customizada no HTML
-legend_html = """
+legend_html = f"""
 <div style="position:fixed;top:10px;left:10px;background:#1a1a1a;padding:15px;border-radius:8px;
             font-family:monospace;font-size:12px;color:#F5F3EF;z-index:1000;border:1px solid #333;
             max-height:90vh;overflow-y:auto;">
-  <b style="font-size:14px;">Startups.RIP Graph</b><br><br>
-  <span style="color:#4A90D9;">&#9679;</span> Company (1000)<br>
-  <span style="color:#F5A623;">&#9679;</span> Category (144)<br>
-  <span style="color:#7ED321;">&#9679;</span> YC Batch (81)<br>
-  <span style="color:#D0021B;">&#9679;</span> Status<br>
-  <span style="color:#9013FE;">&#9679;</span> Acquirer (100)<br>
-  <span style="color:#50E3C2;">&#9679;</span> Person/Founder<br>
-  <span style="color:#B8E986;">&#9679;</span> Location (117)<br>
-  <span style="color:#FF6B6B;">&#9679;</span> Competitor<br>
+  <b style="font-size:14px;">Corpus graph</b><br>
+  <span style="color:#888;font-size:11px;">(sem category/location/macro no canvas)</span><br><br>
+  {_c("Company", "company")}
+  {_c("YC Batch", "yc_batch")}
+  {_c("Status", "status")}
+  {_c("Outcome", "outcome")}
+  {_c("Data source", "data_source")}
+  {_c("Acquirer", "acquirer")}
+  {_c("Competitor", "competitor")}
+  {_c("Site", "site")}
   <br><b>Controles:</b><br>
   - Scroll: zoom<br>
   - Drag: mover<br>
@@ -183,5 +197,8 @@ with open(HTML_PATH, "w", encoding="utf-8", errors="ignore") as f:
     f.write(html)
 
 print(f"Grafo salvo em: {HTML_PATH}")
-print("Abrindo no browser...")
-webbrowser.open(f"file:///{HTML_PATH.replace(os.sep, '/')}")
+if os.environ.get("SKIP_BROWSER"):
+    print("SKIP_BROWSER=1 — não abrindo o browser.")
+else:
+    print("Abrindo no browser...")
+    webbrowser.open(f"file:///{HTML_PATH.replace(os.sep, '/')}")

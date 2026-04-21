@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Startups.RIP — visualizador do grafo</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="layout">
+      <header>
+        <h1>Grafo (dados exportados)</h1>
+        <span class="hint"
+          >Fonte: <code>output/startups_graph.json</code> — corpus multi-fonte (~9k empresas). O grafo completo com
+          dezenas de milhares de arestas é pesado no browser; por defeito usa-se o modo explorador. Para análise
+          pesada, exporta para <strong>Gephi</strong> / <strong>Neo4j</strong> ou usa visualização WebGL
+          (ex.: Cosmograph). Link direto com grafo completo:
+          <code>?full=1</code>. Grafo com muitas arestas:
+          <a href="force-view.html">vista WebGL 3D (3d-force-graph)</a> · Cosmograph (máx. performance):
+          <code>python run_cosmograph_viewer.py</code> (porta 5174).</span
+        >
+        <div class="toolbar">
+          <label title="~9k pontos, 0 arestas — cor por outcome. Usável no browser.">
+            <input type="checkbox" id="companiesOnly" checked />
+            Modo explorador (só empresas, sem arestas)
+          </label>
+          <label>
+            <input type="checkbox" id="filterSections" checked />
+            Ocultar nós de relatório (seção / subseção / build plan)
+          </label>
+          <label title="Só quando o modo explorador está desligado: esconde nós taxonomy pesados.">
+            <input type="checkbox" id="lightMode" checked />
+            Ocultar category / location / macro
+          </label>
+          <label>
+            Física
+            <select id="physicsPreset">
+              <option value="on">Ligada</option>
+              <option value="off" selected>Desligada</option>
+              <option value="stabilizeThenOff">Estabilizar e parar</option>
+            </select>
+          </label>
+          <button type="button" id="btnFit">Encaixar na tela</button>
+          <button type="button" id="btnReload">Recarregar JSON</button>
+        </div>
+      </header>
+      <aside id="legend">
+        <h2>Tipos de nó</h2>
+        <div id="legendBody"></div>
+      </aside>
+      <main id="network"></main>
+      <aside id="side">
+        <h2>Nó selecionado</h2>
+        <p id="sideEmpty" class="hint">Clique em um nó para ver os atributos crus do JSON.</p>
+        <pre id="sideJson" hidden></pre>
+      </aside>
+      <div id="status">Carregando…</div>
+    </div>
+    <script
+      src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
