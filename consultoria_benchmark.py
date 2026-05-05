@@ -1725,6 +1725,122 @@ W_CAUSE_INFER   = 16    # causa idêntica (inferida) — mais fraco porque é gu
 W_CAUSE_SECOND  = 8     # risco secundário do user casou
 W_COUNTRY       = 7
 W_ERA           = 5
+# Fase 3 — dimensões adicionais (acopladas a Phase 1+2 data)
+W_NETWORK       = 8     # founders/investors em comum (Jaccard)
+W_REGULATORY    = 7     # mesmo regulador setorial OU mesma divisão CNAE (BR)
+W_TRAJECTORY    = 6     # distância em (era, porte, capital tier)
+
+
+# ─── Helpers para dimensões Fase 3 ────────────────────────────────────────────
+
+# Mapeia macros → reguladores BR esperados. Usado em D_REGULATORY pra inferir
+# o regulador "natural" do user a partir dos macros declarados, mesmo quando
+# o user não preencheu regulator_authority explicitamente.
+_MACRO_TO_REGULATORS = {
+    "finance":  {"BACEN", "CVM"},
+    "health":   {"ANS", "ANVISA"},
+    "media":    {"ANATEL"},          # rádio/TV/streaming licenciados
+    "education": set(),              # MEC tem cadastro mas não está no Phase 1
+    "sustainability": {"ANEEL"},     # energia limpa cai em ANEEL
+}
+
+
+def expected_regulators_for_user(user: dict) -> set[str]:
+    """Reguladores BR esperados para o user, derivados de macros + país."""
+    if normalize_country(user.get("country", "")) != "brazil":
+        return set()
+    user_macros = user.get("_macros") or categories_to_macros(user.get("categories", []))
+    out: set[str] = set()
+    for m in user_macros:
+        out |= _MACRO_TO_REGULATORS.get(m, set())
+    return out
+
+
+# Buckets para trajectory_similarity. Discretizamos para que pequenas
+# diferenças de fundação/porte/capital não pesem demais.
+_PORTE_ORDER = ["MICRO", "PEQUENO", "DEMAIS", "GRANDE"]
+
+
+def _porte_index(porte: str) -> int | None:
+    if not porte:
+        return None
+    p = porte.strip().upper()
+    for i, label in enumerate(_PORTE_ORDER):
+        if p.startswith(label):
+            return i
+    return None
+
+
+def _funding_to_usd_tier(text: str) -> int | None:
+    """Faixa logarítmica de funding em USD: 0=<100k, 1=100k-1M, 2=1M-10M, 3=10M-100M, 4=100M+."""
+    if not text:
+        return None
+    s = text.strip().upper()
+    # Detecta moeda
+    is_brl = "BRL" in s or "R$" in s
+    s = s.replace("USD", "").replace("BRL", "").replace("US$", "").replace("R$", "").replace("$", "").strip()
+    # Multiplicador K/M/B (extrai antes de mexer nos pontos/vírgulas)
+    mult = 1.0
+    if s.endswith("K"):
+        mult = 1e3; s = s[:-1]
+    elif s.endswith("M"):
+        mult = 1e6; s = s[:-1]
+    elif s.endswith("B"):
+        mult = 1e9; s = s[:-1]
+    s = s.strip()
+    # Remoção de separadores: heurística — se tem "." e "," a vírgula é
+    # decimal (PT/BR style "1.500,00"). Se só "." e termina em ".0", trata
+    # como decimal. Caso contrário (típico EN "1,500.00" ou "1.5"), troca
+    # vírgula por nada e mantém "." como decimal.
+    if "." in s and "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        # ambíguo; "1,5" claramente decimal PT, "1,500" claramente thousands EN
+        s = s.replace(",", ".") if len(s.split(",")[-1]) <= 2 else s.replace(",", "")
+    elif s.count(".") > 1:
+        # múltiplos pontos = thousands separator (PT format "1.500.000")
+        s = s.replace(".", "")
+    try:
+        n = float(s) * mult
+    except ValueError:
+        return None
+    if is_brl:
+        n = n / 5.0  # BRL→USD aproximado (taxa estável o suficiente p/ tier)
+    if n < 1e5:
+        return 0
+    if n < 1e6:
+        return 1
+    if n < 1e7:
+        return 2
+    if n < 1e8:
+        return 3
+    return 4
+
+
+def _team_size_to_porte(team_size: str) -> int | None:
+    """Converte text como '12' ou '11-50' ou 'small' em índice de porte."""
+    if not team_size:
+        return None
+    s = team_size.strip().lower()
+    # Tenta primeiro número
+    m = re.search(r"\d+", s)
+    if m:
+        n = int(m.group(0))
+        if n < 10:
+            return 0    # MICRO
+        if n < 50:
+            return 1    # PEQUENO
+        if n < 200:
+            return 2    # DEMAIS
+        return 3        # GRANDE
+    # Fallback textual
+    if "micro" in s or "small" in s:
+        return 0
+    if "med" in s or "pequen" in s:
+        return 1
+    if "large" in s or "grande" in s:
+        return 3
+    return None
 
 # Convergência: se empresa morta + >= N dimensões com valor >= threshold, bônus.
 CONVERGENCE_THRESHOLD = 0.3
@@ -1923,6 +2039,109 @@ def score_company(user: dict, c: dict,
                     })
     except (TypeError, ValueError):
         pass
+
+    # D9 — network proximity (founders/investors em comum)
+    # Fonte do sinal: investidores e fundadores em comum sinalizam playbook
+    # compartilhado, mesmo conselho operando, e maior chance de competirem
+    # diretamente ou seguirem trajetória semelhante. Vale tanto para
+    # acelerar quanto pra detectar "clones" do mesmo fundo.
+    user_founders = {normalize(f) for f in (user.get("founders") or []) if f}
+    user_investors = {normalize(i) for i in (user.get("investors") or []) if i}
+    if user_founders or user_investors:
+        comp_founders = {normalize(f) for f in (c.get("founders") or []) if f}
+        comp_investors = {normalize(i) for i in (c.get("investors") or []) if i}
+
+        def _jacc(a: set, b: set) -> float:
+            if not a or not b:
+                return 0.0
+            inter = a & b
+            uni = a | b
+            return len(inter) / len(uni) if uni else 0.0
+
+        j_f = _jacc(user_founders, comp_founders)
+        j_i = _jacc(user_investors, comp_investors)
+        val = max(j_f, j_i)
+        if val >= 0.05:
+            shared = (user_founders & comp_founders) | (user_investors & comp_investors)
+            kind = "fundadores" if j_f >= j_i else "investidores"
+            dims.append({
+                "name": "rede (founders/investors)",
+                "value": min(val, 1.0),
+                "weight": W_NETWORK,
+                "points": W_NETWORK * min(val, 1.0),
+                "reason": f"{kind} em comum ({len(shared)}): "
+                          f"{', '.join(list(shared)[:5])}",
+            })
+
+    # D10 — regulatory exposure overlap (BR)
+    # Empresas no mesmo regulador têm exposição idêntica a mudança de regra,
+    # mesma supervisão, mesma trajetória de compliance. Quando o user não
+    # tem regulator_authority explícito, derivamos do macro+país.
+    user_regulators = user.get("_expected_regulators")
+    if user_regulators is None:
+        user_regulators = expected_regulators_for_user(user)
+        user["_expected_regulators"] = user_regulators
+    comp_regulator = (c.get("regulator_authority") or "").upper()
+    user_country_n = normalize_country(user.get("country", ""))
+    if user_country_n == "brazil" and comp_regulator and user_regulators:
+        if comp_regulator in user_regulators:
+            dims.append({
+                "name": "exposição regulatória",
+                "value": 1.0,
+                "weight": W_REGULATORY,
+                "points": W_REGULATORY,
+                "reason": f"mesmo regulador ({comp_regulator})",
+            })
+        else:
+            # Mesma divisão CNAE = mesma supervisão setorial implícita,
+            # mesmo que o regulador formal seja outro. Vale meio peso.
+            user_cnae = (user.get("cnae_primary") or "").strip()
+            comp_cnae = (c.get("cnae_primary") or "").strip()
+            if user_cnae and comp_cnae and user_cnae[:2] == comp_cnae[:2]:
+                dims.append({
+                    "name": "exposição regulatória",
+                    "value": 0.5,
+                    "weight": W_REGULATORY,
+                    "points": W_REGULATORY * 0.5,
+                    "reason": f"mesma divisão CNAE ({user_cnae[:2]}xx)",
+                })
+
+    # D11 — trajectory similarity (era × porte × capital tier)
+    # Trajetórias parecidas ⇒ aprendizado mais transferível: empresa fundada
+    # em 2021 com capital seed e 12 funcionários se beneficia mais de outra
+    # com perfil semelhante do que de uma 2018 já com 200 pessoas.
+    try:
+        u_year = int(user.get("founded_year", "") or 0)
+        c_year = int(c.get("founded_year", "") or 0)
+    except (TypeError, ValueError):
+        u_year = c_year = 0
+    u_porte = _team_size_to_porte(user.get("team_size", ""))
+    c_porte = _porte_index(c.get("porte", ""))
+    # Fallback: candidato sem porte mas com headcount textual
+    if c_porte is None:
+        c_porte = _team_size_to_porte(c.get("headcount", ""))
+    u_cap = _funding_to_usd_tier(user.get("total_funding", ""))
+    c_cap = _funding_to_usd_tier(c.get("total_funding", ""))
+
+    # Conta quantas dimensões da trajetória estão definidas em ambos
+    components = []
+    if u_year and c_year:
+        components.append(("era", 1.0 - min(abs(u_year - c_year) / 5.0, 1.0)))
+    if u_porte is not None and c_porte is not None:
+        components.append(("porte", 1.0 - min(abs(u_porte - c_porte) / 3.0, 1.0)))
+    if u_cap is not None and c_cap is not None:
+        components.append(("capital", 1.0 - min(abs(u_cap - c_cap) / 4.0, 1.0)))
+    if len(components) >= 2:  # exige 2/3 componentes
+        val = sum(v for _, v in components) / len(components)
+        if val >= 0.5:
+            parts = ", ".join(f"{k}={v:.2f}" for k, v in components)
+            dims.append({
+                "name": "trajetória",
+                "value": val,
+                "weight": W_TRAJECTORY,
+                "points": W_TRAJECTORY * val,
+                "reason": f"perfil similar ({parts})",
+            })
 
     # Score base
     score = sum(d["points"] for d in dims)

@@ -328,6 +328,10 @@ _SCALAR_FIELDS_MERGE = (
     "github_stars_total",
     "github_top_repo_stars",
     "github_created_at",
+    # Fase 3 — CADE + GDELT
+    "cade_act_count",
+    "news_mention_count_12m",
+    "news_tone_12m",
 )
 
 # Campos lista que recebem união (case-insensitive em strings)
@@ -340,6 +344,7 @@ _LIST_FIELDS_MERGE = (
     "cnae_secondary",
     "qsa",
     "github_languages",
+    "cade_acts",
 )
 
 

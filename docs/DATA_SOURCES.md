@@ -216,7 +216,32 @@ Catálogo das fontes que compõem o corpus. Cada entrada documenta **o que é**,
 
 ---
 
-## 19. Curate BR Famous Deaths (manual)
+## 19. CADE — Atos de Concentração Julgados (Fase 3)
+
+- **O que é** — Toda fusão e aquisição relevante no Brasil passa por julgamento do CADE. Cada ato tem requerentes (CNPJs envolvidos), data de julgamento e decisão (Aprovado sem restrições / Aprovado com restrições / Reprovado / Arquivado).
+- **Licença / ToS** — Dados abertos federais via CKAN (`dados.gov.br/dados/conjuntos-dados?organizacao=cade`).
+- **Como coleta** — [scrape_cade.py](../scrape_cade.py). Resolve URL via CKAN `package_show?id=atos-de-concentracao-julgados`, agrega por CNPJ, classifica decisão da última ocorrência. Caso o slug mude, ajustar `DATASET_ID` ou `URL_DIRECT`.
+- **Schema resultante** — `cnpj`, `cade_acts` (lista de `{processo, data, decisao}`), `cade_act_count`, `outcome` derivado da decisão mais recente, `categories` inclui "M&A julgado" + "CADE".
+- **Volume** — alguns milhares de atos cumulativos; ~poucas centenas de empresas únicas distintas BR de grande porte ou estratégicas.
+- **Valor agregado** — primeira fonte de **M&A oficial BR** (complementa `acquirer` do Wikidata, que é majoritariamente EN). Empresa que aparece em múltiplos atos é "alvo recorrente de consolidação".
+- **Última verificação** — 2026-05.
+
+---
+
+## 20. GDELT 2.0 — Mention Count + Sentiment Tone (Fase 3)
+
+- **O que é** — Global Database of Events, Language, Tone — projeto da Google Jigsaw que indexa em tempo real notícias mundiais e calcula sentiment (tom) e tópicos. API DOC pública.
+- **Licença / ToS** — Serviço público de pesquisa; redistribuição agregada exige atribuir GDELT.
+- **Como coleta** — [scrape_gdelt.py](../scrape_gdelt.py). Para cada empresa do corpus, query `"<nome>"` (sem sufixo societário) + `sourcecountry:BR` quando aplicável. Endpoint: `api.gdeltproject.org/api/v2/doc/doc?mode=ToneChart&timespan=12m&format=json`. Parseia ToneChart para extrair `mention_count` e `weighted_mean_tone` (escala -1..+1).
+- **Schema resultante** — `news_mention_count_12m`, `news_tone_12m` (-1..+1, normalizado da escala -10..+10 do GDELT).
+- **Filtros** — Threshold mínimo de 2 menções pra evitar falsos positivos de nomes genéricos. `--br-only`, `--max N`, `--skip-existing` para reruns.
+- **Rate** — 2s/req (sem limit hard documentado, gentileza). ~110k empresas full = ~60h. Recomendado `--br-only`.
+- **Valor agregado** — primeira **dimensão temporal de sinal de mercado**: empresa com volume crescente e tone negativo é stress-flag; volume crescente + tone positivo é momentum favorável.
+- **Última verificação** — 2026-05.
+
+---
+
+## 21. Curate BR Famous Deaths (manual)
 
 - **O que é** — [curate_br_famous_deaths.py](../curate_br_famous_deaths.py). Lista **curada manualmente** de startups brasileiras conhecidas que morreram (Easy Taxi, Peixe Urbano era BR, Movile, etc.) com fonte/citação em cada entrada.
 - **Licença / ToS** — Texto próprio + citações de reportagens (fair use).
@@ -260,6 +285,10 @@ python startups_rip_scraper.py
 python scrape_wayback.py --br-only --skip-existing      # idade do domínio
 python scrape_reclame_aqui.py --skip-existing           # sentiment BR
 GITHUB_TOKEN=ghp_xxx python scrape_github.py --tech-only --skip-existing
+
+# Brasil + Global — Fase 3 (M&A oficial + news/tone)
+python scrape_cade.py                                   # atos de concentração BR
+python scrape_gdelt.py --br-only --skip-existing        # mentions + tone
 
 # Consolidação final + recompute analytics
 python scrape_multi_sources.py
