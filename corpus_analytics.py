@@ -46,6 +46,10 @@ EMB_PATH = os.path.join(OUT, "company_embeddings.npz")
 ANALYTICS_PATH = os.path.join(OUT, "corpus_analytics.json")
 CENTROIDS_PATH = os.path.join(OUT, "cluster_centroids.npy")
 
+# Snapshots versionados pra detecção de drift temporal
+SNAPSHOTS_DIR = os.path.join(OUT, "analytics_snapshots")
+os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _decade(year_str: str) -> str:
@@ -226,13 +230,128 @@ def cluster_corpus(companies: list, embeddings: np.ndarray,
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 
+def save_snapshot(payload: dict, centroids: np.ndarray, label: str | None = None) -> str:
+    """Versiona o payload + centroides num subdir datado para análise de drift.
+
+    `label` opcional vira sufixo no nome (ex: 'pre-receita', 'pos-fase1').
+    Retorna o path do diretório do snapshot.
+    """
+    from datetime import datetime
+    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    sub = f"{ts}_{label}" if label else ts
+    snap_dir = os.path.join(SNAPSHOTS_DIR, sub)
+    os.makedirs(snap_dir, exist_ok=True)
+    with open(os.path.join(snap_dir, "corpus_analytics.json"), "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    np.save(os.path.join(snap_dir, "cluster_centroids.npy"), centroids)
+    return snap_dir
+
+
+def list_snapshots() -> list[str]:
+    if not os.path.isdir(SNAPSHOTS_DIR):
+        return []
+    return sorted(
+        os.path.join(SNAPSHOTS_DIR, n)
+        for n in os.listdir(SNAPSHOTS_DIR)
+        if os.path.isdir(os.path.join(SNAPSHOTS_DIR, n))
+    )
+
+
+def compare_snapshots(snap_a: str, snap_b: str) -> dict:
+    """Compara dois snapshots de analytics e retorna sumário de drift.
+
+    Para cada cluster mais antigo (snap_a), encontra o cluster mais próximo
+    em snap_b por distância euclidiana de centroide. Reporta:
+      - mudança de tamanho (n)
+      - mudança de death/survival rate
+      - clusters novos (em B mas não em A)
+      - clusters que esvaziaram (em A mas pequeno em B)
+
+    Útil pra responder "que segmento está crescendo? qual está morrendo?".
+    """
+    with open(os.path.join(snap_a, "corpus_analytics.json"), encoding="utf-8") as f:
+        a = json.load(f)
+    with open(os.path.join(snap_b, "corpus_analytics.json"), encoding="utf-8") as f:
+        b = json.load(f)
+    cent_a = np.load(os.path.join(snap_a, "cluster_centroids.npy"))
+    cent_b = np.load(os.path.join(snap_b, "cluster_centroids.npy"))
+
+    # Match cluster A → cluster B mais próximo
+    if cent_a.shape[1] != cent_b.shape[1]:
+        return {"error": "dimensões de embedding incompatíveis entre snapshots"}
+
+    matches = []
+    used_b = set()
+    for i, ca in enumerate(cent_a):
+        # distância euclidiana
+        dists = np.linalg.norm(cent_b - ca, axis=1)
+        order = np.argsort(dists)
+        # pega o mais próximo ainda não usado
+        for j in order:
+            if j not in used_b:
+                used_b.add(int(j))
+                break
+        else:
+            continue
+        cluster_a = a["clusters"].get(str(i)) or {}
+        cluster_b = b["clusters"].get(str(int(j))) or {}
+        outcomes_a = cluster_a.get("outcomes", {}) or {}
+        outcomes_b = cluster_b.get("outcomes", {}) or {}
+        size_a = cluster_a.get("size", 0)
+        size_b = cluster_b.get("size", 0)
+        death_a = outcomes_a.get("death_rate", 0.0) or 0.0
+        death_b = outcomes_b.get("death_rate", 0.0) or 0.0
+        matches.append({
+            "cluster_a": i,
+            "cluster_b": int(j),
+            "label_a": cluster_a.get("label", ""),
+            "label_b": cluster_b.get("label", ""),
+            "size_a": size_a,
+            "size_b": size_b,
+            "size_delta": size_b - size_a,
+            "size_delta_pct": (100.0 * (size_b - size_a) / size_a) if size_a > 0 else None,
+            "death_rate_a": round(death_a, 3),
+            "death_rate_b": round(death_b, 3),
+            "death_delta_pp": round((death_b - death_a) * 100, 2),
+            "centroid_distance": float(np.linalg.norm(cent_b[int(j)] - ca)),
+        })
+
+    new_clusters = sorted(set(range(cent_b.shape[0])) - used_b)
+    matches.sort(key=lambda m: -(m["size_delta"] or 0))
+
+    return {
+        "snapshot_a": snap_a,
+        "snapshot_b": snap_b,
+        "corpus_a": a.get("corpus_size", 0),
+        "corpus_b": b.get("corpus_size", 0),
+        "matched_clusters": matches,
+        "new_clusters_in_b": [
+            {"id": cid, "size": (b["clusters"].get(str(cid)) or {}).get("size", 0),
+             "label": (b["clusters"].get(str(cid)) or {}).get("label", "")}
+            for cid in new_clusters
+        ],
+        "top_growing": matches[:5],
+        "top_shrinking": matches[-5:][::-1],
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--k", type=int, default=50,
                     help="número de clusters KMeans (default 50)")
     ap.add_argument("--rebuild-only", action="store_true",
                     help="só salva, não imprime amostra")
+    ap.add_argument("--save-snapshot", nargs="?", const="auto", default=None,
+                    help="versiona o payload em output/analytics_snapshots/<ts>[_label]")
+    ap.add_argument("--compare-snapshots", nargs=2, metavar=("A", "B"),
+                    help="compara 2 snapshot dirs e imprime drift report (não roda KMeans)")
     args = ap.parse_args()
+
+    if args.compare_snapshots:
+        snap_a, snap_b = args.compare_snapshots
+        report = compare_snapshots(snap_a, snap_b)
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+        return
 
     print(f"[load] corpus: {CORPUS_PATH}")
     with open(CORPUS_PATH, encoding="utf-8") as f:
@@ -271,6 +390,11 @@ def main() -> None:
     np.save(CENTROIDS_PATH, centroids)
     print(f"[save] {ANALYTICS_PATH}")
     print(f"[save] {CENTROIDS_PATH}  ({centroids.shape})")
+
+    if args.save_snapshot:
+        label = None if args.save_snapshot == "auto" else args.save_snapshot
+        snap_dir = save_snapshot(payload, centroids, label=label)
+        print(f"[snapshot] {snap_dir}")
 
     if not args.rebuild_only:
         # amostra: clusters maiores e cohort de software
