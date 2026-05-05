@@ -394,7 +394,12 @@ CATEGORY_MACROS = {
                      "financas", "financeiro", "financeira", "pagamento",
                      "pagamentos", "bancario", "bancaria", "credito",
                      "emprestimo", "conta digital", "corretora", "seguro",
-                     "seguros", "tributos", "contabilidade", "investimentos"],
+                     "seguros", "tributos", "contabilidade", "investimentos",
+                     # PT cadastrais (Receita/BACEN)
+                     "banco", "bancos", "atividades de bancos",
+                     "banco comercial", "banco multiplo", "banco de investimento",
+                     "cooperativa de credito", "instituicao de pagamento",
+                     "sociedade de credito", "arrendamento mercantil"],
     "software":     ["saas", "software", "software & hardware", "b2b", "b2b2c",
                      "dev tools", "developer tools", "devtools", "devops",
                      "infrastructure", "api", "platform", "enterprise", "cloud",
@@ -844,12 +849,118 @@ def _strip_negated_spans(text: str) -> str:
 
 # ─── Macro-segmentos ─────────────────────────────────────────────────────────
 
+# Mapping CNAE (divisão = 2 primeiros dígitos do código) → macro-segmento.
+# Cobre as Seções A..U do CNAE 2.3 do IBGE, o suficiente pra classificar
+# automaticamente empresas vindas do dump da Receita Federal e dos
+# reguladores setoriais. Alimenta categories_to_macros quando a categoria
+# vem como código (ex: "6422-1/00") em vez de descrição.
+CNAE_DIVISION_MACROS = {
+    # Seção A — Agricultura, Pecuária, Pesca, Florestas
+    "01": "agriculture", "02": "agriculture", "03": "agriculture",
+    # Seção B — Indústrias extrativas
+    "05": "sustainability", "06": "sustainability", "07": "sustainability",
+    "08": "sustainability", "09": "sustainability",
+    # Seção C — Indústrias de transformação (alimentos, bebidas, têxtil, etc)
+    "10": "food", "11": "food", "12": "food",
+    "13": "ecommerce", "14": "ecommerce", "15": "ecommerce",  # têxtil/confecção/calçado
+    "16": "real_estate",  # madeira (proxy construção)
+    "17": "real_estate", "18": "media",  # papel / impressão
+    "19": "sustainability", "20": "sustainability", "21": "health",  # químico/farma
+    "22": "hardware", "23": "hardware",  # borracha/plástico, minerais
+    "24": "hardware", "25": "hardware",  # metalurgia
+    "26": "hardware", "27": "hardware",  # equipamentos eletrônicos/elétricos
+    "28": "hardware", "29": "transport",  # máquinas, automotivo
+    "30": "transport",  # outros equipamentos transporte
+    "31": "ecommerce", "32": "ecommerce",  # móveis, diversos
+    "33": "hardware",  # manutenção/instalação
+    # Seção D — Eletricidade e gás
+    "35": "sustainability",
+    # Seção E — Água, esgoto, gestão de resíduos
+    "36": "sustainability", "37": "sustainability", "38": "sustainability", "39": "sustainability",
+    # Seção F — Construção
+    "41": "real_estate", "42": "real_estate", "43": "real_estate",
+    # Seção G — Comércio
+    "45": "ecommerce", "46": "ecommerce", "47": "ecommerce",
+    # Seção H — Transporte e armazenamento
+    "49": "transport", "50": "transport", "51": "transport", "52": "transport", "53": "transport",
+    # Seção I — Alojamento e alimentação
+    "55": "travel", "56": "food",
+    # Seção J — Informação e comunicação
+    "58": "media",  # edição
+    "59": "media", "60": "media",  # áudio-visual, rádio/TV
+    "61": "media",  # telecomunicações (override em scrapers ANATEL adiciona telecom específico)
+    "62": "software",  # serviços de TI
+    "63": "software",  # processamento de dados, hospedagem
+    # Seção K — Financeiras
+    "64": "finance", "65": "finance", "66": "finance",
+    # Seção L — Atividades imobiliárias
+    "68": "real_estate",
+    # Seção M — Profissionais, científicas e técnicas
+    "69": "legal",  # jurídicas, contabilidade
+    "70": "productivity",  # gestão empresarial
+    "71": "productivity",  # arquitetura, engenharia
+    "72": "analytics",  # P&D
+    "73": "marketing",  # publicidade
+    "74": "design",  # design, fotografia
+    "75": "health",  # veterinárias
+    # Seção N — Administrativas e serviços complementares
+    "77": "transport",  # locação
+    "78": "hr",  # seleção/RH
+    "79": "travel",  # agências de viagem
+    "80": "security",  # segurança e investigação
+    "81": "real_estate",  # serviços para edifícios
+    "82": "productivity",  # suporte administrativo
+    # Seção O — Adm pública, defesa
+    "84": "legal",
+    # Seção P — Educação
+    "85": "education",
+    # Seção Q — Saúde humana e serviços sociais
+    "86": "health", "87": "health", "88": "health",
+    # Seção R — Artes, cultura, esporte e recreação
+    "90": "media", "91": "media", "92": "media", "93": "media",
+    # Seção S — Outras atividades de serviços
+    "94": "social",  # associações
+    "95": "hardware",  # reparação
+    "96": "social",  # outros serviços pessoais
+    # Seção T — Serviços domésticos
+    "97": "social",
+}
+
+
+_CNAE_PREFIX_RE = re.compile(r"^(\d{2})(?:[\.\-/]?\d)*")
+
+
+def _cnae_code_to_macro(cat: str) -> str | None:
+    """Se `cat` parece um código CNAE ('62.01-5/01' ou '6201-5/01' ou '6201501'),
+    retorna o macro-segmento. Caso contrário, None."""
+    if not cat:
+        return None
+    s = cat.strip().lstrip("0").replace(".", "").replace("-", "").replace("/", "")
+    if not s.isdigit() or len(s) < 4:
+        # Talvez começa com código embutido em texto livre: "6422-1/00 - Atividades..."
+        m = re.match(r"^\s*(\d{2})[\.\-/]?\d", cat)
+        if not m:
+            return None
+        return CNAE_DIVISION_MACROS.get(m.group(1))
+    # primeiros dois dígitos = divisão
+    return CNAE_DIVISION_MACROS.get(s[:2])
+
+
 def categories_to_macros(categories: list[str]) -> set[str]:
-    """Mapeia lista de categorias → conjunto de macros. Aceita PT e EN."""
+    """Mapeia lista de categorias → conjunto de macros. Aceita PT e EN, e
+    códigos CNAE (Receita / reguladores BR)."""
     if not categories:
         return set()
     out = set()
     for cat in categories:
+        if not cat:
+            continue
+        # 1) Tenta como código CNAE (rápido)
+        macro_from_cnae = _cnae_code_to_macro(cat)
+        if macro_from_cnae:
+            out.add(macro_from_cnae)
+            # não dá `continue` — descrição que vem junto pode adicionar outro macro
+        # 2) Substring contra os keywords PT/EN (lógica original)
         low = _strip_accents((cat or "").lower().strip())
         if not low:
             continue
