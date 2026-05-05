@@ -2662,6 +2662,227 @@ def _fmt_outcome_line(outcomes: dict, total: int, label: str) -> str:
             f"incerto {u} ({pct(u)})")
 
 
+def _format_executive_summary(user: dict, ranked: list, stats: dict,
+                              meta: dict | None,
+                              diagnosis: dict | None) -> list[str]:
+    """Sumário executivo: bloco de 1 página antes do detalhe.
+
+    3 mensagens-chave + recomendação prioritária + 3 próximas ações +
+    confiança da análise. Templates condicionados pelos padrões já
+    detectados (signal direction, convergence, segment size, input quality)
+    — não chama LLM nem inferência nova.
+    """
+    L = []
+    sig = (diagnosis or {}).get("signal") or {}
+    direction = sig.get("direction", "")
+    delta_pp = sig.get("delta_dead_pct", 0.0) or 0.0
+    top_outs = (diagnosis or {}).get("top_outcomes", {}) or {}
+    seg_outs = (diagnosis or {}).get("seg_outcomes", {}) or {}
+    seg_size = (diagnosis or {}).get("segment_size", 0) or 0
+    top_total = sum(top_outs.values()) or 1
+    top_dead_pct = 100.0 * (top_outs.get("dead", 0)) / top_total
+    seg_dead_n = seg_outs.get("dead", 0)
+    seg_total = sum(seg_outs.values()) or 1
+    seg_dead_pct = 100.0 * seg_dead_n / seg_total
+    convergence_count = sum(1 for _, _, _, b in ranked[:10] if b.get("convergence"))
+
+    # ─── Veredito em 1 linha ────
+    if direction == "NEGATIVO":
+        emoji = "🔴"
+        verdict = "ALERTA — caminho convergindo com peers que MORRERAM"
+    elif direction == "POSITIVO":
+        emoji = "🟢"
+        verdict = "POSITIVO — caminho convergindo com peers que SOBREVIVERAM"
+    elif direction == "NEUTRO":
+        emoji = "⚪"
+        verdict = "NEUTRO — risco no padrão do segmento"
+    else:
+        emoji = "❔"
+        verdict = "Sinal insuficiente — adicione contexto pra melhorar"
+
+    L.append("=" * 72)
+    L.append(" SUMÁRIO EXECUTIVO")
+    L.append("=" * 72)
+    L.append(f"  {emoji} {verdict}")
+    if direction in {"NEGATIVO", "POSITIVO"}:
+        L.append(f"     {top_dead_pct:.0f}% dos seus top-{top_total} mortos vs "
+                 f"{seg_dead_pct:.0f}% do segmento  →  delta {delta_pp*100:+.0f}pp")
+    L.append("")
+
+    # ─── 3 mensagens-chave ────
+    L.append("  MENSAGENS-CHAVE")
+    msgs = []
+
+    # 1. Posição vs cohort
+    if seg_size >= 30 and direction:
+        if direction == "NEGATIVO":
+            msgs.append(f"Seu perfil casa estruturalmente com peers do segmento "
+                        f"(n={seg_size}); a taxa de morte deles é {seg_dead_pct:.0f}% "
+                        f"mas no seu top-{top_total} sobe para {top_dead_pct:.0f}%.")
+        elif direction == "POSITIVO":
+            msgs.append(f"Você está em pelotão favorável: peers do mesmo segmento "
+                        f"morrem {seg_dead_pct:.0f}%, e seu top-{top_total} reduz "
+                        f"isso pra {top_dead_pct:.0f}%.")
+        else:
+            msgs.append(f"Mortalidade do seu top-{top_total} ({top_dead_pct:.0f}%) "
+                        f"é comparável à do segmento ({seg_dead_pct:.0f}%).")
+    elif seg_size and seg_size < 30:
+        msgs.append(f"Segmento estatisticamente raso (n={seg_size}); leia o ranking "
+                    f"como hipótese, não como base sólida.")
+
+    # 2. Convergência estrutural
+    if convergence_count >= 3:
+        msgs.append(f"Convergência alta: {convergence_count} dos seus top-10 "
+                    f"batem em ≥4 dimensões (clones estruturais). Quando isso "
+                    f"acontece, a trajetória do peer #1 é o principal preditor.")
+    elif convergence_count == 0 and ranked:
+        msgs.append("Sem clones estruturais no top-10 — matches são parciais. "
+                    "O ranking é direcional; pares específicos exigem leitura humana.")
+
+    # 3. Confiança do input
+    quality = (meta or {}).get("quality", {}) or {}
+    input_trust = quality.get("input_trust") if isinstance(quality, dict) else None
+    if input_trust is not None and input_trust < 0.7:
+        msgs.append(f"Input enxuto (trust={input_trust:.1f}). Adicionar one-liner "
+                    f"mais detalhado, segmento e país pode mover scores em ±10pts.")
+
+    # 4. Cluster, se houver
+    cluster = (meta or {}).get("cluster") or (diagnosis or {}).get("cluster")
+    if isinstance(cluster, dict) and cluster.get("survival_rate") is not None:
+        s_rate = float(cluster["survival_rate"]) * 100
+        msgs.append(f"Cluster KMeans #{cluster.get('id','?')} "
+                    f"(n={cluster.get('size','?')}) tem sobrevivência de "
+                    f"{s_rate:.0f}%; é o seu pelotão visual no espaço de embeddings.")
+
+    if not msgs:
+        msgs.append("Não houve sinal forte para gerar mensagens — o relatório "
+                    "completo abaixo cobre as dimensões individuais.")
+    for i, m in enumerate(msgs[:4], 1):
+        # quebra em duas linhas se passar de 70 chars
+        if len(m) <= 70:
+            L.append(f"   {i}. {m}")
+        else:
+            words = m.split(" ")
+            line, lines = "", []
+            for w in words:
+                if len(line) + len(w) + 1 > 70:
+                    lines.append(line)
+                    line = w
+                else:
+                    line = (line + " " + w).strip()
+            if line:
+                lines.append(line)
+            L.append(f"   {i}. {lines[0]}")
+            for ln in lines[1:]:
+                L.append(f"      {ln}")
+    L.append("")
+
+    # ─── Recomendação prioritária ────
+    L.append("  RECOMENDAÇÃO PRIORITÁRIA (próximos 90 dias)")
+    if direction == "NEGATIVO" and convergence_count >= 3:
+        # Pega o clone estrutural #1 (top dimensão)
+        first_dead_clone = None
+        for s, score, c, b in ranked[:10]:
+            if b.get("convergence") and c.get("outcome") == "dead":
+                first_dead_clone = c
+                break
+        if first_dead_clone:
+            cause = first_dead_clone.get("failure_cause") or "não documentada"
+            yr = first_dead_clone.get("shutdown_year") or first_dead_clone.get("founded_year") or ""
+            country = first_dead_clone.get("country") or ""
+            L.append(f"   ⚠ Estude o post-mortem de \"{first_dead_clone.get('name','')}\" "
+                     f"({country}{', '+yr if yr else ''}, morta — {cause})")
+            L.append(f"     — esse é o caso mais próximo do que você pode evitar.")
+        else:
+            L.append("   ⚠ Caminho em alerta; reveja unit economics e dependências")
+            L.append("     antes de pivotar ou levantar capital.")
+    elif direction == "POSITIVO":
+        L.append("   ✓ Caminho favorável; foco deve ser EXECUÇÃO consistente, não")
+        L.append("     reposicionamento. Identifique 3 táticas dos sobreviventes")
+        L.append("     do seu cohort (bloco \"survivor terms\" abaixo) e replique.")
+    elif input_trust is not None and input_trust < 0.6:
+        L.append("   • Ampliar input antes de tomar decisão: descreva o produto em")
+        L.append("     1-2 parágrafos, declare modelo de negócio e país/região.")
+    else:
+        L.append("   • Use o ranking abaixo como input pra workshop de estratégia;")
+        L.append("     priorize ler post-mortems dos 3 primeiros mortos.")
+    L.append("")
+
+    # ─── Próximas 3 ações ────
+    L.append("  PRÓXIMAS 3 AÇÕES")
+    actions: list[str] = []
+
+    # Ação 1 — sempre o top-1
+    if ranked:
+        s1, _sc1, c1, _b1 = ranked[0]
+        c1_name = c1.get("name", "?")
+        c1_outcome = c1.get("outcome", "")
+        action_verb = "Ler post-mortem" if c1_outcome == "dead" else "Estudar trajetória"
+        actions.append(f"{action_verb} de \"{c1_name}\" — match #1 ({c1.get('country','')}, "
+                       f"{c1.get('founded_year','')}, {c1_outcome})")
+
+    # Ação 2 — survivor terms
+    surv = (diagnosis or {}).get("survivor_terms") or []
+    if surv:
+        top_terms = ", ".join(t for t, _, _ in surv[:3])
+        actions.append(f"Conferir se sua proposta cobre: {top_terms} — termos que "
+                       f"aparecem mais nos sobreviventes do seu segmento")
+
+    # Ação 3 — risco-chave
+    mc = user.get("main_concern", "")
+    if mc and stats.get("segment_matching_cause_count"):
+        n = stats["segment_matching_cause_count"]
+        actions.append(f"Mapear como mitigar \"{mc}\" — {n} empresa(s) do seu "
+                       f"segmento morreram exatamente por isso")
+    elif user.get("country") == "Brazil":
+        actions.append("Revisar exposição regulatória BR (BACEN/ANS/ANATEL "
+                       "conforme setor) — fonte recorrente de morte no corpus BR")
+    else:
+        actions.append("Comparar runway atual vs cohort: quanto seus peers "
+                       "tinham levantado neste estágio")
+
+    for i, a in enumerate(actions[:3], 1):
+        if len(a) <= 70:
+            L.append(f"   {i}. {a}")
+        else:
+            words = a.split(" ")
+            line, lines = "", []
+            for w in words:
+                if len(line) + len(w) + 1 > 70:
+                    lines.append(line)
+                    line = w
+                else:
+                    line = (line + " " + w).strip()
+            if line:
+                lines.append(line)
+            L.append(f"   {i}. {lines[0]}")
+            for ln in lines[1:]:
+                L.append(f"      {ln}")
+    L.append("")
+
+    # ─── Confiança ────
+    confidence_bits = []
+    if seg_size:
+        if seg_size >= 500:
+            confidence_bits.append(f"segmento robusto (n={seg_size})")
+        elif seg_size >= 50:
+            confidence_bits.append(f"segmento médio (n={seg_size})")
+        else:
+            confidence_bits.append(f"segmento raso (n={seg_size})")
+    if input_trust is not None:
+        if input_trust >= 0.8:
+            confidence_bits.append(f"input rico (trust={input_trust:.1f})")
+        elif input_trust >= 0.6:
+            confidence_bits.append(f"input médio (trust={input_trust:.1f})")
+        else:
+            confidence_bits.append(f"input enxuto (trust={input_trust:.1f})")
+    if confidence_bits:
+        L.append("  CONFIANÇA: " + " · ".join(confidence_bits))
+    L.append("")
+    L.append("=" * 72)
+    return L
+
+
 def format_report(user: dict, ranked: list, stats: dict,
                   meta: dict | None = None,
                   diagnosis: dict | None = None) -> str:
@@ -2670,6 +2891,16 @@ def format_report(user: dict, ranked: list, stats: dict,
     L.append(f" CONSULTORIA DE RISCO: {user.get('name','?')}")
     L.append(f" Gerada em: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     L.append("=" * 72)
+
+    # Sumário Executivo: vai antes de tudo (cliente lê primeiro o que importa)
+    try:
+        L.extend(_format_executive_summary(user, ranked, stats, meta, diagnosis))
+    except Exception as e:
+        # Se o sumário quebrar por dados ausentes, segue sem ele — não bloqueia
+        # o resto do relatório, que é o conteúdo histórico já estável.
+        log_msg = f"  (sumário executivo indisponível: {type(e).__name__})"
+        L.append("")
+        L.append(log_msg)
 
     # Alertas de confiabilidade ANTES dos dados — se o input é fraco ou tem
     # incoerência, o user precisa saber disso antes de ler o ranking.

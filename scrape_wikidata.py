@@ -314,6 +314,20 @@ _SCALAR_FIELDS_MERGE = (
     "regulator_authority",
     "regulator_id",
     "regulator_status",
+    # Fase 2 — conteúdo profundo
+    "website_archive_first_seen",
+    "domain_age_years",
+    "reclame_aqui_score",
+    "reclame_aqui_status",
+    "reclame_aqui_slug",
+    "reclame_aqui_solved_pct",
+    "reclame_aqui_reply_pct",
+    "github_org",
+    "github_followers",
+    "github_public_repos",
+    "github_stars_total",
+    "github_top_repo_stars",
+    "github_created_at",
 )
 
 # Campos lista que recebem união (case-insensitive em strings)
@@ -325,6 +339,7 @@ _LIST_FIELDS_MERGE = (
     "competitors",
     "cnae_secondary",
     "qsa",
+    "github_languages",
 )
 
 

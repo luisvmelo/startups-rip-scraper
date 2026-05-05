@@ -181,7 +181,42 @@ Catálogo das fontes que compõem o corpus. Cada entrada documenta **o que é**,
 
 ---
 
-## 16. Curate BR Famous Deaths (manual)
+## 16. Wayback Machine — idade real do domínio (Fase 2)
+
+- **O que é** — API pública do Internet Archive que devolve, para uma URL, o snapshot mais antigo conhecido. Usado como sinal de **idade real** do domínio (cruzamento com `founded_year` declarado: empresa pode ter "fundado_year=2023" mas domínio existir desde 2015 = rebranding ou data inflada).
+- **Licença / ToS** — Internet Archive Terms; uso pessoal/educacional grátis. Atribuir o IA quando redistribuir snapshots.
+- **Como coleta** — [scrape_wayback.py](../scrape_wayback.py). Para cada empresa com `website` populado, GET em `https://archive.org/wayback/available?url=<root>&timestamp=19960101`. Adiciona `website_archive_first_seen` (YYYY-MM-DD) e `domain_age_years`.
+- **Rate limit** — 1 req/s (gentil; o IA é ONG e não publica limit oficial).
+- **Volume estimado** — ~30k empresas com website no corpus → ~8h em wall-clock. Use `--max N`, `--br-only`, `--skip-existing` para reruns incrementais.
+- **Última verificação** — 2026-05.
+
+---
+
+## 17. Reclame Aqui — sentiment do cliente BR (Fase 2)
+
+- **O que é** — Plataforma BR de reclamações de consumidores. Score consolidado 0-10 + status (Reclame Aqui / Não Recomendado) + percentuais de solução e resposta.
+- **Licença / ToS** — Site público; conteúdo editorial. Sem scraping massivo. Atribuir Reclame Aqui em qualquer redistribuição visível.
+- **Como coleta** — [scrape_reclame_aqui.py](../scrape_reclame_aqui.py). API de busca pública (mesmo endpoint do frontend): `iosearch.reclameaqui.com.br/raichu-io-site-search-v1/companies?q=<nome>` → seleciona melhor match → opcional `company/shortname/<slug>` para detalhes.
+- **Schema resultante** — `reclame_aqui_score`, `reclame_aqui_status`, `reclame_aqui_slug`, `reclame_aqui_solved_pct`, `reclame_aqui_reply_pct`. Marca `reclame_aqui_lookup_failed=True` quando não encontra (evita re-query).
+- **Rate limit** — 1.5s entre buscas. Em ~14k BR ≈ 6h.
+- **Valor agregado** — primeira **dimensão de qualidade do cliente** disponível no corpus; sinaliza fragilidade reputacional antes de mortalidade financeira.
+- **Última verificação** — 2026-05.
+
+---
+
+## 18. GitHub — sinal técnico (Fase 2)
+
+- **O que é** — REST API oficial do GitHub. Para empresas com presença open source (org pública), captura saúde técnica: followers, repos, stars, linguagens dominantes, idade da org.
+- **Licença / ToS** — GitHub API Terms; 60 req/h sem auth, 5.000/h com Personal Access Token. Sem distribuir conteúdo de repositórios privados (não acessamos).
+- **Como coleta** — [scrape_github.py](../scrape_github.py). Discovery do `github_org` em ordem: (1) `website` ou `description` ou `links` casando regex `github.com/<org>`; (2) heurística por nome normalizado, confirmando match cruzado com `blog`/`name` da org. Depois: `GET /orgs/<org>` + `GET /users/<org>/repos?per_page=30`.
+- **Schema resultante** — `github_org`, `github_followers`, `github_public_repos`, `github_stars_total`, `github_top_repo_stars`, `github_languages` (top 5), `github_created_at`.
+- **Auth** — `GITHUB_TOKEN=ghp_xxx python scrape_github.py` é fortemente recomendado para corpus maior que ~50 empresas.
+- **Flags** — `--tech-only` restringe a empresas com macro `software/ai/web3/security/hardware/analytics/productivity` (reduz 70% das chamadas inúteis).
+- **Última verificação** — 2026-05.
+
+---
+
+## 19. Curate BR Famous Deaths (manual)
 
 - **O que é** — [curate_br_famous_deaths.py](../curate_br_famous_deaths.py). Lista **curada manualmente** de startups brasileiras conhecidas que morreram (Easy Taxi, Peixe Urbano era BR, Movile, etc.) com fonte/citação em cada entrada.
 - **Licença / ToS** — Texto próprio + citações de reportagens (fair use).
@@ -220,6 +255,11 @@ python enrich_br_brasilapi.py            # use --force para reprocessar; --max N
 # startups.rip (opcional — requer Playwright)
 playwright install chromium
 python startups_rip_scraper.py
+
+# Brasil — Fase 2 (conteúdo profundo: website, sentiment, técnico)
+python scrape_wayback.py --br-only --skip-existing      # idade do domínio
+python scrape_reclame_aqui.py --skip-existing           # sentiment BR
+GITHUB_TOKEN=ghp_xxx python scrape_github.py --tech-only --skip-existing
 
 # Consolidação final + recompute analytics
 python scrape_multi_sources.py

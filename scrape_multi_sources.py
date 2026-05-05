@@ -150,6 +150,22 @@ class MSCompany:
     regulator_id: str = ""                # código de registro no regulador
     regulator_status: str = ""            # status no regulador (pode divergir de Receita)
     regulator_metadata: dict = field(default_factory=dict)
+    # Fase 2 — Conteúdo profundo (Wayback, Reclame Aqui, GitHub)
+    website_archive_first_seen: str = ""  # YYYY-MM-DD primeiro snapshot Wayback
+    domain_age_years: str = ""            # anos desde primeiro snapshot
+    reclame_aqui_score: float | None = None     # 0-10
+    reclame_aqui_status: str = ""
+    reclame_aqui_slug: str = ""
+    reclame_aqui_solved_pct: float | None = None
+    reclame_aqui_reply_pct: float | None = None
+    reclame_aqui_lookup_failed: bool = False    # marca não-encontrada p/ skip
+    github_org: str = ""
+    github_followers: int = 0
+    github_public_repos: int = 0
+    github_stars_total: int = 0
+    github_top_repo_stars: int = 0
+    github_languages: list = field(default_factory=list)
+    github_created_at: str = ""
     # Provenance por campo: {"description": [{"source":"failory","value":"..."}]}
     provenance: dict = field(default_factory=dict)
     # Raw record por fonte (preserva tudo sem remodelar)
