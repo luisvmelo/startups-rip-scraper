@@ -288,6 +288,46 @@ def normalize_record(r: dict) -> Optional[dict]:
 
 # ─── Merge ──────────────────────────────────────────────────────────────────
 
+# Campos escalares mesclados pelo "primeira fonte que define vence". Demais
+# fontes ainda gravam em provenance.
+_SCALAR_FIELDS_MERGE = (
+    "founded_year",
+    "shutdown_year",
+    "shutdown_date",
+    "country",
+    "location",
+    "city",
+    "headcount",
+    "website",
+    "acquirer",
+    "total_funding",
+    "failure_cause",
+    "post_mortem",
+    # Novos campos cadastrais BR (Receita / reguladores)
+    "cnpj",
+    "cnae_primary",
+    "porte",
+    "natureza_juridica",
+    "data_abertura",
+    "data_situacao_cadastral",
+    "motivo_situacao_cadastral",
+    "regulator_authority",
+    "regulator_id",
+    "regulator_status",
+)
+
+# Campos lista que recebem união (case-insensitive em strings)
+_LIST_FIELDS_MERGE = (
+    "founders",
+    "categories",
+    "links",
+    "investors",
+    "competitors",
+    "cnae_secondary",
+    "qsa",
+)
+
+
 def merge_into_corpus(new: list[dict]) -> tuple[int, int]:
     if not os.path.exists(EXISTING_CORPUS):
         with open(EXISTING_CORPUS, "w", encoding="utf-8") as f:
@@ -296,19 +336,43 @@ def merge_into_corpus(new: list[dict]) -> tuple[int, int]:
 
     with open(EXISTING_CORPUS, "r", encoding="utf-8") as f:
         existing = json.load(f)
-    by_norm = {c.get("norm", ""): c for c in existing if c.get("norm")}
+
+    # Dois índices: CNPJ (primário, definitivo BR) e norm (fallback global).
+    by_norm: dict[str, dict] = {}
+    by_cnpj: dict[str, dict] = {}
+    for c in existing:
+        norm_key = c.get("norm", "")
+        cnpj_key = (c.get("cnpj") or "").strip()
+        if norm_key:
+            by_norm[norm_key] = c
+        if cnpj_key:
+            by_cnpj[cnpj_key] = c
+
     added = 0
     enriched = 0
     for n in new:
-        key = n["norm"]
-        if not key:
+        norm_key = n.get("norm", "")
+        cnpj_key = (n.get("cnpj") or "").strip()
+        if not norm_key and not cnpj_key:
             continue
-        if key not in by_norm:
+
+        # CNPJ tem prioridade absoluta de match (resolve homônimos)
+        cur = None
+        if cnpj_key and cnpj_key in by_cnpj:
+            cur = by_cnpj[cnpj_key]
+        elif norm_key and norm_key in by_norm:
+            cur = by_norm[norm_key]
+
+        if cur is None:
             existing.append(n)
-            by_norm[key] = n
+            if norm_key:
+                by_norm[norm_key] = n
+            if cnpj_key:
+                by_cnpj[cnpj_key] = n
             added += 1
             continue
-        cur = by_norm[key]
+
+        # Merge no record existente
         was_new_source = False
         for src in n.get("sources", []):
             if src not in cur.get("sources", []):
@@ -316,29 +380,43 @@ def merge_into_corpus(new: list[dict]) -> tuple[int, int]:
                 was_new_source = True
         if was_new_source:
             enriched += 1
-        for fld in (
-            "founded_year",
-            "shutdown_year",
-            "country",
-            "location",
-            "city",
-            "headcount",
-            "website",
-            "acquirer",
-        ):
+
+        # Se o record existente não tinha CNPJ e o novo tem, registra no índice
+        if cnpj_key and not (cur.get("cnpj") or "").strip():
+            cur["cnpj"] = cnpj_key
+            by_cnpj[cnpj_key] = cur
+
+        # Escalares: primeiro valor vence; só preenche vazios
+        for fld in _SCALAR_FIELDS_MERGE:
             if not cur.get(fld) and n.get(fld):
                 cur[fld] = n[fld]
+
+        # Outcome: regulador setorial + Receita são mais autoritativos que inferência
         if not cur.get("outcome") or cur.get("outcome") == "unknown":
             cur["outcome"] = n.get("outcome", cur.get("outcome", ""))
-        for list_field in ("founders", "categories", "links"):
+
+        # Listas: união preservando ordem
+        for list_field in _LIST_FIELDS_MERGE:
             existing_items = cur.get(list_field, []) or []
-            lower_set = {x.lower() if isinstance(x, str) else x for x in existing_items}
+            lower_set = {
+                (x.lower() if isinstance(x, str) else json.dumps(x, sort_keys=True))
+                for x in existing_items
+            }
             for v in n.get(list_field, []) or []:
-                k2 = v.lower() if isinstance(v, str) else v
+                k2 = v.lower() if isinstance(v, str) else json.dumps(v, sort_keys=True)
                 if k2 not in lower_set:
                     existing_items.append(v)
                     lower_set.add(k2)
             cur[list_field] = existing_items
+
+        # regulator_metadata: dict — merge shallow, mantendo valores prévios
+        if isinstance(n.get("regulator_metadata"), dict):
+            existing_md = cur.setdefault("regulator_metadata", {})
+            for k_md, v_md in n["regulator_metadata"].items():
+                if k_md not in existing_md:
+                    existing_md[k_md] = v_md
+
+        # Provenance: append-only por campo
         for k, entries in n.get("provenance", {}).items():
             cur.setdefault("provenance", {}).setdefault(k, []).extend(entries)
         cur.setdefault("raw_per_source", {}).update(n.get("raw_per_source", {}))

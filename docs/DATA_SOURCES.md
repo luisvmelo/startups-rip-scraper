@@ -109,7 +109,79 @@ Catálogo das fontes que compõem o corpus. Cada entrada documenta **o que é**,
 
 ---
 
-## 10. Curate BR Famous Deaths (manual)
+## 10. Receita Federal — CNPJ Open Data
+
+- **O que é** — Dump cadastral oficial de **todos** os CNPJs brasileiros (ativos, baixados, suspensos, inaptos), com razão social, CNAE primário/secundário, situação cadastral, capital social, porte, natureza jurídica, data de abertura/baixa e QSA (quadro de sócios e administradores).
+- **Licença / ToS** — Dados abertos federais (`dadosabertos.rfb.gov.br/CNPJ/`); uso livre.
+- **Como coleta** — [scrape_receita_cnpj.py](../scrape_receita_cnpj.py). Resolve o snapshot mensal mais recente, baixa Empresas + Estabelecimentos + Sócios + auxiliares (Cnaes, Naturezas, Motivos, Municipios), faz pass-streaming linha-a-linha (não carrega tudo em memória) e aplica filtros antes do merge.
+- **Filtros default** — exclui MEI (porte=01 + natureza=2135), exige razão social, exige natureza com fins comerciais (família 1xxx/2xxx/4xxx). Flags: `--include-mei`, `--min-capital`, `--max-empresas`, `--snapshot YYYY-MM`, `--skip-download`.
+- **Schema resultante** — Empresas BR com `cnpj`, `cnae_primary`, `cnae_secondary`, `porte`, `natureza_juridica`, `data_abertura`, `data_situacao_cadastral`, `motivo_situacao_cadastral`, `qsa`, `outcome` (ATIVA→operating, BAIXADA→dead, SUSPENSA/INAPTA→unknown).
+- **Volume estimado** — ~5M empresas BR após filtros default; 55M registros brutos.
+- **Custo** — ~3GB de download por snapshot + ~3-4h de processing CPU. Streaming permite resume via `--skip-download`.
+- **Rate limit** — sem rate limit; é dump estático.
+- **Última verificação** — 2026-05.
+
+---
+
+## 11. BACEN — Instituições Financeiras + IPs autorizadas
+
+- **O que é** — Cadastro oficial do Banco Central de bancos, cooperativas, corretoras, financeiras, agências de fomento e Instituições de Pagamento (IPs — fintechs reguladas).
+- **Licença / ToS** — Dados abertos via API Olinda (OData), pública sem auth.
+- **Como coleta** — [scrape_bacen.py](../scrape_bacen.py). Paginação OData em duas tabelas: `IfsFinanceiras` e `InstituicoesDePagamento`.
+- **Schema resultante** — `cnpj`, `regulator_authority="BACEN"`, `regulator_status` (Ativa/Cancelada/Em Liquidação/Em Intervenção), `regulator_metadata.segmento`, categorias (Banking/Brokerage/Fintech/Payments/Lending/Cooperative).
+- **Volume** — ~3-5k registros (incluindo histórico).
+- **Rate limit** — 0.5s entre páginas.
+- **Valor agregado** — ground truth do segmento fintech regulado BR. Capturamos divergência: empresa pode estar ATIVA na Receita mas com situação BACEN diferente.
+- **Última verificação** — 2026-05.
+
+---
+
+## 12. ANS — Operadoras de Planos de Saúde
+
+- **O que é** — Cadastro ANS (Agência Nacional de Saúde Suplementar) de operadoras ativas e canceladas, com modalidade (Cooperativa Médica, Medicina de Grupo, Autogestão, Filantropia, Seguradora Especializada em Saúde, Odontologia de Grupo, Cooperativa Odontológica), data de registro e (quando aplicável) data + motivo de descredenciamento.
+- **Licença / ToS** — Dados abertos federais (`dadosabertos.ans.gov.br`); uso livre com atribuição.
+- **Como coleta** — [scrape_ans.py](../scrape_ans.py). Baixa `Relatorio_cadop.csv` (ativas) + `Relatorio_cadop_cancel.csv` (canceladas).
+- **Schema resultante** — `cnpj`, `regulator_authority="ANS"`, `regulator_id` (Registro_ANS), categorias por modalidade, `failure_cause` quando descredenciada.
+- **Volume** — ~700-1.000 operadoras.
+- **Valor agregado** — sinal de mortalidade no setor saúde BR; canceladas trazem motivo declarado.
+- **Última verificação** — 2026-05.
+
+---
+
+## 13. ANEEL — Agentes do Setor Elétrico
+
+- **O que é** — Cadastro ANEEL de geradoras, distribuidoras, comercializadoras, transmissoras, permissionárias e consumidores livres, com tipo de outorga e situação (Em Operação / Cancelado / Em Construção / Outorga Revogada).
+- **Licença / ToS** — Dados abertos via CKAN (`dadosabertos.aneel.gov.br`).
+- **Como coleta** — [scrape_aneel.py](../scrape_aneel.py). Resolve URL via CKAN `package_show?id=agentes-do-setor-eletrico-brasileiro`. Tolerante a UTF-8 e latin-1.
+- **Schema resultante** — `cnpj`, `regulator_authority="ANEEL"`, `regulator_metadata.tipo_agente`, categorias (Energy + Geração/Distribuição/Comercialização/Transmissão).
+- **Volume** — ~5k agentes.
+- **Última verificação** — 2026-05.
+
+---
+
+## 14. ANATEL — Prestadoras de Serviços de Telecomunicações
+
+- **O que é** — Cadastro ANATEL de outorgas SCM (Serviço de Comunicação Multimídia, ~ISPs), SMP (móvel pessoal), STFC (telefonia fixa), SeAC (TV por assinatura), SVA. Cada outorga vinculada a CNPJ.
+- **Licença / ToS** — Dados abertos via CKAN do portal `dados.gov.br`.
+- **Como coleta** — [scrape_anatel.py](../scrape_anatel.py). CKAN `package_show?id=prestadoras-de-servico-de-telecomunicacoes`. Caso o slug mude, atualizar `DATASET_ID` no topo do arquivo. Empresa com outorgas em múltiplas UFs/serviços é deduplicada por CNPJ e categorias agregadas.
+- **Schema resultante** — `cnpj`, `regulator_authority="ANATEL"`, `regulator_metadata.servico`, categorias (Telecom + ISP/Mobile/Telefonia Fixa/TV).
+- **Volume** — ~10k+ provedores (SCM domina).
+- **Última verificação** — 2026-05.
+
+---
+
+## 15. ANVISA — Empresas com Registro de Produto
+
+- **O que é** — Empresas detentoras de registro ativo na ANVISA em medicamentos, cosméticos, saneantes ou dispositivos médicos. Não é cadastro de empresa (não há dataset oficial de "empresas ANVISA"); é derivado por agregação dos datasets de produto, agrupando por CNPJ da empresa detentora.
+- **Licença / ToS** — Dados abertos federais (`dados.anvisa.gov.br`).
+- **Como coleta** — [scrape_anvisa.py](../scrape_anvisa.py). Tolerante: tenta cada CSV em `DATASETS = {medicamentos, cosmeticos, saneantes, produtos_saude}`; pula os que falharem. Heurística por colunas (varia entre datasets ANVISA).
+- **Schema resultante** — `cnpj`, `regulator_authority="ANVISA"`, `regulator_metadata.datasets` (lista de em quais aparece), `regulator_metadata.products_count`. Outcome heurístico: `operating` se algum produto ativo, `dead` se todos caducados.
+- **Volume** — ~10k empresas.
+- **Última verificação** — 2026-05.
+
+---
+
+## 16. Curate BR Famous Deaths (manual)
 
 - **O que é** — [curate_br_famous_deaths.py](../curate_br_famous_deaths.py). Lista **curada manualmente** de startups brasileiras conhecidas que morreram (Easy Taxi, Peixe Urbano era BR, Movile, etc.) com fonte/citação em cada entrada.
 - **Licença / ToS** — Texto próprio + citações de reportagens (fair use).
@@ -119,7 +191,7 @@ Catálogo das fontes que compõem o corpus. Cada entrada documenta **o que é**,
 
 ## Como reconstruir o corpus do zero
 
-Ordem recomendada — cada scraper é independente, mas BrasilAPI precisa de CNPJs (CVM / BNDES primeiro).
+Ordem recomendada — cada scraper é independente, mas BrasilAPI precisa de CNPJs (CVM / BNDES / Receita primeiro).
 
 ```bash
 # Globais
@@ -127,22 +199,32 @@ python scrape_yc.py
 python scrape_failory_cemetery.py
 python scrape_wikidata.py                # várias horas; é o maior
 
-# Brasil
+# Brasil — diretórios e oficiais
 python scrape_openstartups.py
 python scrape_cvm.py
 python scrape_bndes.py
 python scrape_wikidata_br.py             # bucket BR do Wikidata
 python curate_br_famous_deaths.py        # lista curada manual
 
-# Enriquecimento (depende dos anteriores)
-python enrich_br_brasilapi.py
+# Brasil — Fase 1 (volume oficial: Receita + reguladores setoriais)
+python scrape_receita_cnpj.py            # ~3-4h, ~3GB; aceita --max-empresas pra teste
+python scrape_bacen.py                   # bancos + IPs
+python scrape_ans.py                     # operadoras de saúde
+python scrape_aneel.py                   # agentes do setor elétrico
+python scrape_anatel.py                  # prestadoras de telecom
+python scrape_anvisa.py                  # empresas com registro ANVISA
+
+# Enriquecimento (depende dos anteriores; pula automaticamente quem já veio da Receita)
+python enrich_br_brasilapi.py            # use --force para reprocessar; --max N para limitar
 
 # startups.rip (opcional — requer Playwright)
 playwright install chromium
 python startups_rip_scraper.py
 
-# Consolidação final
+# Consolidação final + recompute analytics
 python scrape_multi_sources.py
+python consultoria_benchmark.py --rebuild-enrichment
+python corpus_analytics.py --k 50
 ```
 
 Saída final: `output/multi_source_companies.json` → passa por `consultoria_benchmark.py --rebuild-enrichment` → `multi_source_companies_enriched.json`.

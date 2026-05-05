@@ -134,6 +134,22 @@ class MSCompany:
     yc_batch: str = ""
     website: str = ""
     links: list = field(default_factory=list)
+    # Cadastro Receita / reguladores BR (preenchido por scrape_receita_cnpj,
+    # scrape_cvm, scrape_bacen, scrape_ans, scrape_aneel, scrape_anatel,
+    # scrape_anvisa e enrich_br_brasilapi).
+    cnpj: str = ""
+    cnae_primary: str = ""
+    cnae_secondary: list = field(default_factory=list)
+    porte: str = ""                       # MICRO/PEQUENO/DEMAIS/NÃO INFORMADO
+    natureza_juridica: str = ""
+    data_abertura: str = ""
+    data_situacao_cadastral: str = ""
+    motivo_situacao_cadastral: str = ""
+    qsa: list = field(default_factory=list)              # nomes de sócios formais
+    regulator_authority: str = ""         # BACEN | ANS | ANEEL | ANATEL | ANVISA | CVM
+    regulator_id: str = ""                # código de registro no regulador
+    regulator_status: str = ""            # status no regulador (pode divergir de Receita)
+    regulator_metadata: dict = field(default_factory=dict)
     # Provenance por campo: {"description": [{"source":"failory","value":"..."}]}
     provenance: dict = field(default_factory=dict)
     # Raw record por fonte (preserva tudo sem remodelar)

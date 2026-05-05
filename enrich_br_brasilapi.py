@@ -168,10 +168,50 @@ def enrich_record(c: dict, payload: dict) -> bool:
 
 
 def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="re-enriquece mesmo empresas que já têm dados da Receita Federal",
+    )
+    ap.add_argument(
+        "--max",
+        type=int,
+        default=0,
+        help="limita número de chamadas (0 = sem limite); útil para teste",
+    )
+    args = ap.parse_args()
+
     with open(CORPUS_PATH, "r", encoding="utf-8") as f:
         corpus = json.load(f)
-    targets = [c for c in corpus if c.get("cnpj")]
-    log.info(f"[enrich] corpus={len(corpus)}  with CNPJ={len(targets)}")
+
+    # Só considera empresas com CNPJ que ainda PRECISAM de enrichment.
+    # Se a Receita já populou (sources contém "receita"), pulamos por default —
+    # Receita oferece QSA/CNAE/capital social/situação cadastral igual à BrasilAPI.
+    targets = []
+    skipped_by_receita = 0
+    skipped_by_brasilapi = 0
+    for c in corpus:
+        if not c.get("cnpj"):
+            continue
+        srcs = c.get("sources") or []
+        if not args.force and "receita" in srcs:
+            skipped_by_receita += 1
+            continue
+        if not args.force and "brasilapi" in srcs:
+            skipped_by_brasilapi += 1
+            continue
+        targets.append(c)
+    log.info(
+        f"[enrich] corpus={len(corpus)}  com CNPJ={sum(1 for c in corpus if c.get('cnpj'))}  "
+        f"a enriquecer={len(targets)}  (skip receita={skipped_by_receita}, "
+        f"brasilapi={skipped_by_brasilapi})"
+    )
+
+    if args.max:
+        targets = targets[: args.max]
+        log.info(f"[enrich] cap aplicado: --max {args.max}")
 
     if not targets:
         log.info("[enrich] nothing to enrich — exit")
