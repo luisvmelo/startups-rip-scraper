@@ -265,7 +265,29 @@ Catálogo das fontes que compõem o corpus. Cada entrada documenta **o que é**,
 
 ---
 
-## 23. Curate BR Famous Deaths (manual)
+## 23. INPI — Marcas Registradas (Fase 5)
+
+- **O que é** — Cadastro oficial do Instituto Nacional da Propriedade Industrial: marcas registradas, situação (Concedido / Caduco / Indeferido / Em Análise), titular (CNPJ ou nome), classe de Nice.
+- **Licença / ToS** — Dados abertos federais (`dados.gov.br/dados/conjuntos-dados?organizacao=inpi`).
+- **Como coleta** — [scrape_inpi_marcas.py](../scrape_inpi_marcas.py). CKAN `package_show?id=registros-de-marcas`. Agrega por CNPJ do titular, conta marcas ativas (CONCEDIDA/REGISTRADA/VIGENTE) + classes distintas. Caso slug mude, ajustar `DATASET_ID`/`URL_DIRECT`.
+- **Schema resultante** — `inpi_marks_active`, `inpi_marks_total`, `inpi_classes` (lista de códigos de classe Nice).
+- **Valor agregado** — sinal de **diferenciação juridicamente defendida**. Empresa com 0 marcas registradas é mais exposta a clones e disputas. Quanto mais classes, maior escopo de proteção.
+- **Última verificação** — 2026-05.
+
+---
+
+## 24. Endeavor + ABStartups — Curadoria Startup BR (Fase 5)
+
+- **O que é** — Listas curadas de scale-ups (Endeavor Scale-up Brasil ~100 empresas/ano) e startups associadas (ABStartups ~10k empresas).
+- **Licença / ToS** — Sites públicos. Endeavor tem listicle anual; ABStartups tem página de associados (DataTables/Wordpress).
+- **Como coleta** — [scrape_endeavor_abstartups.py](../scrape_endeavor_abstartups.py). Best-effort: tenta `__NEXT_DATA__` (Endeavor é Next.js) → tenta endpoints WP-JSON (`/wp-json/wp/v2/associados`) → fallback HTML markup. Tolerante: se um falha, segue com o outro.
+- **Schema resultante** — empresa com `categories: ["Curadoria Startup BR", "Endeavor Scale-up"|"ABStartups", setor]`.
+- **Valor agregado** — validação de mercado: aparição em Endeavor é proxy de scale-up real (curadoria forte). ABStartups dá cobertura ampla do ecossistema startup BR.
+- **Última verificação** — 2026-05. UI pode mudar; o scraper tem fallbacks mas eventualmente precisa de rescan.
+
+---
+
+## 25. Curate BR Famous Deaths (manual)
 
 - **O que é** — [curate_br_famous_deaths.py](../curate_br_famous_deaths.py). Lista **curada manualmente** de startups brasileiras conhecidas que morreram (Easy Taxi, Peixe Urbano era BR, Movile, etc.) com fonte/citação em cada entrada.
 - **Licença / ToS** — Texto próprio + citações de reportagens (fair use).
@@ -317,6 +339,10 @@ python scrape_gdelt.py --br-only --skip-existing        # mentions + tone
 # Brasil — Fase 4 (financials + sanctions)
 python scrape_cvm_financials.py                         # DFP/ITR de listadas BR
 python scrape_ceis_cnep.py                              # sanções CGU (CEIS+CNEP)
+
+# Brasil — Fase 5 (IP/brand + curadoria startup)
+python scrape_inpi_marcas.py                            # marcas registradas
+python scrape_endeavor_abstartups.py                    # curadoria scale-up + ecossistema
 
 # Consolidação final + recompute analytics
 python scrape_multi_sources.py

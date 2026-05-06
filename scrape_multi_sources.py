@@ -181,6 +181,11 @@ class MSCompany:
     fiscal_year_end: str = ""             # data do exercício extraído
     sanctions: list = field(default_factory=list)        # CEIS/CNEP da CGU
     has_active_sanction: bool = False
+    # Fase 5 — IP/Brand + Funding rounds estruturados
+    inpi_marks_active: int = 0
+    inpi_marks_total: int = 0
+    inpi_classes: list = field(default_factory=list)     # códigos de classe Nice
+    funding_rounds: list = field(default_factory=list)   # parsed pela parse_funding_rounds()
     # Provenance por campo: {"description": [{"source":"failory","value":"..."}]}
     provenance: dict = field(default_factory=dict)
     # Raw record por fonte (preserva tudo sem remodelar)
