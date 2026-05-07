@@ -181,7 +181,67 @@ Catálogo das fontes que compõem o corpus. Cada entrada documenta **o que é**,
 
 ---
 
-## 16. Curate BR Famous Deaths (manual)
+## 16. Wayback Machine — idade real do domínio (Fase 2)
+
+- **O que é** — API pública do Internet Archive que devolve, para uma URL, o snapshot mais antigo conhecido. Usado como sinal de **idade real** do domínio (cruzamento com `founded_year` declarado: empresa pode ter "fundado_year=2023" mas domínio existir desde 2015 = rebranding ou data inflada).
+- **Licença / ToS** — Internet Archive Terms; uso pessoal/educacional grátis. Atribuir o IA quando redistribuir snapshots.
+- **Como coleta** — [scrape_wayback.py](../scrape_wayback.py). Para cada empresa com `website` populado, GET em `https://archive.org/wayback/available?url=<root>&timestamp=19960101`. Adiciona `website_archive_first_seen` (YYYY-MM-DD) e `domain_age_years`.
+- **Rate limit** — 1 req/s (gentil; o IA é ONG e não publica limit oficial).
+- **Volume estimado** — ~30k empresas com website no corpus → ~8h em wall-clock. Use `--max N`, `--br-only`, `--skip-existing` para reruns incrementais.
+- **Última verificação** — 2026-05.
+
+---
+
+## 17. Reclame Aqui — sentiment do cliente BR (Fase 2)
+
+- **O que é** — Plataforma BR de reclamações de consumidores. Score consolidado 0-10 + status (Reclame Aqui / Não Recomendado) + percentuais de solução e resposta.
+- **Licença / ToS** — Site público; conteúdo editorial. Sem scraping massivo. Atribuir Reclame Aqui em qualquer redistribuição visível.
+- **Como coleta** — [scrape_reclame_aqui.py](../scrape_reclame_aqui.py). API de busca pública (mesmo endpoint do frontend): `iosearch.reclameaqui.com.br/raichu-io-site-search-v1/companies?q=<nome>` → seleciona melhor match → opcional `company/shortname/<slug>` para detalhes.
+- **Schema resultante** — `reclame_aqui_score`, `reclame_aqui_status`, `reclame_aqui_slug`, `reclame_aqui_solved_pct`, `reclame_aqui_reply_pct`. Marca `reclame_aqui_lookup_failed=True` quando não encontra (evita re-query).
+- **Rate limit** — 1.5s entre buscas. Em ~14k BR ≈ 6h.
+- **Valor agregado** — primeira **dimensão de qualidade do cliente** disponível no corpus; sinaliza fragilidade reputacional antes de mortalidade financeira.
+- **Última verificação** — 2026-05.
+
+---
+
+## 18. GitHub — sinal técnico (Fase 2)
+
+- **O que é** — REST API oficial do GitHub. Para empresas com presença open source (org pública), captura saúde técnica: followers, repos, stars, linguagens dominantes, idade da org.
+- **Licença / ToS** — GitHub API Terms; 60 req/h sem auth, 5.000/h com Personal Access Token. Sem distribuir conteúdo de repositórios privados (não acessamos).
+- **Como coleta** — [scrape_github.py](../scrape_github.py). Discovery do `github_org` em ordem: (1) `website` ou `description` ou `links` casando regex `github.com/<org>`; (2) heurística por nome normalizado, confirmando match cruzado com `blog`/`name` da org. Depois: `GET /orgs/<org>` + `GET /users/<org>/repos?per_page=30`.
+- **Schema resultante** — `github_org`, `github_followers`, `github_public_repos`, `github_stars_total`, `github_top_repo_stars`, `github_languages` (top 5), `github_created_at`.
+- **Auth** — `GITHUB_TOKEN=ghp_xxx python scrape_github.py` é fortemente recomendado para corpus maior que ~50 empresas.
+- **Flags** — `--tech-only` restringe a empresas com macro `software/ai/web3/security/hardware/analytics/productivity` (reduz 70% das chamadas inúteis).
+- **Última verificação** — 2026-05.
+
+---
+
+## 19. CADE — Atos de Concentração Julgados (Fase 3)
+
+- **O que é** — Toda fusão e aquisição relevante no Brasil passa por julgamento do CADE. Cada ato tem requerentes (CNPJs envolvidos), data de julgamento e decisão (Aprovado sem restrições / Aprovado com restrições / Reprovado / Arquivado).
+- **Licença / ToS** — Dados abertos federais via CKAN (`dados.gov.br/dados/conjuntos-dados?organizacao=cade`).
+- **Como coleta** — [scrape_cade.py](../scrape_cade.py). Resolve URL via CKAN `package_show?id=atos-de-concentracao-julgados`, agrega por CNPJ, classifica decisão da última ocorrência. Caso o slug mude, ajustar `DATASET_ID` ou `URL_DIRECT`.
+- **Schema resultante** — `cnpj`, `cade_acts` (lista de `{processo, data, decisao}`), `cade_act_count`, `outcome` derivado da decisão mais recente, `categories` inclui "M&A julgado" + "CADE".
+- **Volume** — alguns milhares de atos cumulativos; ~poucas centenas de empresas únicas distintas BR de grande porte ou estratégicas.
+- **Valor agregado** — primeira fonte de **M&A oficial BR** (complementa `acquirer` do Wikidata, que é majoritariamente EN). Empresa que aparece em múltiplos atos é "alvo recorrente de consolidação".
+- **Última verificação** — 2026-05.
+
+---
+
+## 20. GDELT 2.0 — Mention Count + Sentiment Tone (Fase 3)
+
+- **O que é** — Global Database of Events, Language, Tone — projeto da Google Jigsaw que indexa em tempo real notícias mundiais e calcula sentiment (tom) e tópicos. API DOC pública.
+- **Licença / ToS** — Serviço público de pesquisa; redistribuição agregada exige atribuir GDELT.
+- **Como coleta** — [scrape_gdelt.py](../scrape_gdelt.py). Para cada empresa do corpus, query `"<nome>"` (sem sufixo societário) + `sourcecountry:BR` quando aplicável. Endpoint: `api.gdeltproject.org/api/v2/doc/doc?mode=ToneChart&timespan=12m&format=json`. Parseia ToneChart para extrair `mention_count` e `weighted_mean_tone` (escala -1..+1).
+- **Schema resultante** — `news_mention_count_12m`, `news_tone_12m` (-1..+1, normalizado da escala -10..+10 do GDELT).
+- **Filtros** — Threshold mínimo de 2 menções pra evitar falsos positivos de nomes genéricos. `--br-only`, `--max N`, `--skip-existing` para reruns.
+- **Rate** — 2s/req (sem limit hard documentado, gentileza). ~110k empresas full = ~60h. Recomendado `--br-only`.
+- **Valor agregado** — primeira **dimensão temporal de sinal de mercado**: empresa com volume crescente e tone negativo é stress-flag; volume crescente + tone positivo é momentum favorável.
+- **Última verificação** — 2026-05.
+
+---
+
+## 21. Curate BR Famous Deaths (manual)
 
 - **O que é** — [curate_br_famous_deaths.py](../curate_br_famous_deaths.py). Lista **curada manualmente** de startups brasileiras conhecidas que morreram (Easy Taxi, Peixe Urbano era BR, Movile, etc.) com fonte/citação em cada entrada.
 - **Licença / ToS** — Texto próprio + citações de reportagens (fair use).
@@ -220,6 +280,15 @@ python enrich_br_brasilapi.py            # use --force para reprocessar; --max N
 # startups.rip (opcional — requer Playwright)
 playwright install chromium
 python startups_rip_scraper.py
+
+# Brasil — Fase 2 (conteúdo profundo: website, sentiment, técnico)
+python scrape_wayback.py --br-only --skip-existing      # idade do domínio
+python scrape_reclame_aqui.py --skip-existing           # sentiment BR
+GITHUB_TOKEN=ghp_xxx python scrape_github.py --tech-only --skip-existing
+
+# Brasil + Global — Fase 3 (M&A oficial + news/tone)
+python scrape_cade.py                                   # atos de concentração BR
+python scrape_gdelt.py --br-only --skip-existing        # mentions + tone
 
 # Consolidação final + recompute analytics
 python scrape_multi_sources.py

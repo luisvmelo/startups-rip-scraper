@@ -1725,6 +1725,122 @@ W_CAUSE_INFER   = 16    # causa idêntica (inferida) — mais fraco porque é gu
 W_CAUSE_SECOND  = 8     # risco secundário do user casou
 W_COUNTRY       = 7
 W_ERA           = 5
+# Fase 3 — dimensões adicionais (acopladas a Phase 1+2 data)
+W_NETWORK       = 8     # founders/investors em comum (Jaccard)
+W_REGULATORY    = 7     # mesmo regulador setorial OU mesma divisão CNAE (BR)
+W_TRAJECTORY    = 6     # distância em (era, porte, capital tier)
+
+
+# ─── Helpers para dimensões Fase 3 ────────────────────────────────────────────
+
+# Mapeia macros → reguladores BR esperados. Usado em D_REGULATORY pra inferir
+# o regulador "natural" do user a partir dos macros declarados, mesmo quando
+# o user não preencheu regulator_authority explicitamente.
+_MACRO_TO_REGULATORS = {
+    "finance":  {"BACEN", "CVM"},
+    "health":   {"ANS", "ANVISA"},
+    "media":    {"ANATEL"},          # rádio/TV/streaming licenciados
+    "education": set(),              # MEC tem cadastro mas não está no Phase 1
+    "sustainability": {"ANEEL"},     # energia limpa cai em ANEEL
+}
+
+
+def expected_regulators_for_user(user: dict) -> set[str]:
+    """Reguladores BR esperados para o user, derivados de macros + país."""
+    if normalize_country(user.get("country", "")) != "brazil":
+        return set()
+    user_macros = user.get("_macros") or categories_to_macros(user.get("categories", []))
+    out: set[str] = set()
+    for m in user_macros:
+        out |= _MACRO_TO_REGULATORS.get(m, set())
+    return out
+
+
+# Buckets para trajectory_similarity. Discretizamos para que pequenas
+# diferenças de fundação/porte/capital não pesem demais.
+_PORTE_ORDER = ["MICRO", "PEQUENO", "DEMAIS", "GRANDE"]
+
+
+def _porte_index(porte: str) -> int | None:
+    if not porte:
+        return None
+    p = porte.strip().upper()
+    for i, label in enumerate(_PORTE_ORDER):
+        if p.startswith(label):
+            return i
+    return None
+
+
+def _funding_to_usd_tier(text: str) -> int | None:
+    """Faixa logarítmica de funding em USD: 0=<100k, 1=100k-1M, 2=1M-10M, 3=10M-100M, 4=100M+."""
+    if not text:
+        return None
+    s = text.strip().upper()
+    # Detecta moeda
+    is_brl = "BRL" in s or "R$" in s
+    s = s.replace("USD", "").replace("BRL", "").replace("US$", "").replace("R$", "").replace("$", "").strip()
+    # Multiplicador K/M/B (extrai antes de mexer nos pontos/vírgulas)
+    mult = 1.0
+    if s.endswith("K"):
+        mult = 1e3; s = s[:-1]
+    elif s.endswith("M"):
+        mult = 1e6; s = s[:-1]
+    elif s.endswith("B"):
+        mult = 1e9; s = s[:-1]
+    s = s.strip()
+    # Remoção de separadores: heurística — se tem "." e "," a vírgula é
+    # decimal (PT/BR style "1.500,00"). Se só "." e termina em ".0", trata
+    # como decimal. Caso contrário (típico EN "1,500.00" ou "1.5"), troca
+    # vírgula por nada e mantém "." como decimal.
+    if "." in s and "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        # ambíguo; "1,5" claramente decimal PT, "1,500" claramente thousands EN
+        s = s.replace(",", ".") if len(s.split(",")[-1]) <= 2 else s.replace(",", "")
+    elif s.count(".") > 1:
+        # múltiplos pontos = thousands separator (PT format "1.500.000")
+        s = s.replace(".", "")
+    try:
+        n = float(s) * mult
+    except ValueError:
+        return None
+    if is_brl:
+        n = n / 5.0  # BRL→USD aproximado (taxa estável o suficiente p/ tier)
+    if n < 1e5:
+        return 0
+    if n < 1e6:
+        return 1
+    if n < 1e7:
+        return 2
+    if n < 1e8:
+        return 3
+    return 4
+
+
+def _team_size_to_porte(team_size: str) -> int | None:
+    """Converte text como '12' ou '11-50' ou 'small' em índice de porte."""
+    if not team_size:
+        return None
+    s = team_size.strip().lower()
+    # Tenta primeiro número
+    m = re.search(r"\d+", s)
+    if m:
+        n = int(m.group(0))
+        if n < 10:
+            return 0    # MICRO
+        if n < 50:
+            return 1    # PEQUENO
+        if n < 200:
+            return 2    # DEMAIS
+        return 3        # GRANDE
+    # Fallback textual
+    if "micro" in s or "small" in s:
+        return 0
+    if "med" in s or "pequen" in s:
+        return 1
+    if "large" in s or "grande" in s:
+        return 3
+    return None
 
 # Convergência: se empresa morta + >= N dimensões com valor >= threshold, bônus.
 CONVERGENCE_THRESHOLD = 0.3
@@ -1923,6 +2039,109 @@ def score_company(user: dict, c: dict,
                     })
     except (TypeError, ValueError):
         pass
+
+    # D9 — network proximity (founders/investors em comum)
+    # Fonte do sinal: investidores e fundadores em comum sinalizam playbook
+    # compartilhado, mesmo conselho operando, e maior chance de competirem
+    # diretamente ou seguirem trajetória semelhante. Vale tanto para
+    # acelerar quanto pra detectar "clones" do mesmo fundo.
+    user_founders = {normalize(f) for f in (user.get("founders") or []) if f}
+    user_investors = {normalize(i) for i in (user.get("investors") or []) if i}
+    if user_founders or user_investors:
+        comp_founders = {normalize(f) for f in (c.get("founders") or []) if f}
+        comp_investors = {normalize(i) for i in (c.get("investors") or []) if i}
+
+        def _jacc(a: set, b: set) -> float:
+            if not a or not b:
+                return 0.0
+            inter = a & b
+            uni = a | b
+            return len(inter) / len(uni) if uni else 0.0
+
+        j_f = _jacc(user_founders, comp_founders)
+        j_i = _jacc(user_investors, comp_investors)
+        val = max(j_f, j_i)
+        if val >= 0.05:
+            shared = (user_founders & comp_founders) | (user_investors & comp_investors)
+            kind = "fundadores" if j_f >= j_i else "investidores"
+            dims.append({
+                "name": "rede (founders/investors)",
+                "value": min(val, 1.0),
+                "weight": W_NETWORK,
+                "points": W_NETWORK * min(val, 1.0),
+                "reason": f"{kind} em comum ({len(shared)}): "
+                          f"{', '.join(list(shared)[:5])}",
+            })
+
+    # D10 — regulatory exposure overlap (BR)
+    # Empresas no mesmo regulador têm exposição idêntica a mudança de regra,
+    # mesma supervisão, mesma trajetória de compliance. Quando o user não
+    # tem regulator_authority explícito, derivamos do macro+país.
+    user_regulators = user.get("_expected_regulators")
+    if user_regulators is None:
+        user_regulators = expected_regulators_for_user(user)
+        user["_expected_regulators"] = user_regulators
+    comp_regulator = (c.get("regulator_authority") or "").upper()
+    user_country_n = normalize_country(user.get("country", ""))
+    if user_country_n == "brazil" and comp_regulator and user_regulators:
+        if comp_regulator in user_regulators:
+            dims.append({
+                "name": "exposição regulatória",
+                "value": 1.0,
+                "weight": W_REGULATORY,
+                "points": W_REGULATORY,
+                "reason": f"mesmo regulador ({comp_regulator})",
+            })
+        else:
+            # Mesma divisão CNAE = mesma supervisão setorial implícita,
+            # mesmo que o regulador formal seja outro. Vale meio peso.
+            user_cnae = (user.get("cnae_primary") or "").strip()
+            comp_cnae = (c.get("cnae_primary") or "").strip()
+            if user_cnae and comp_cnae and user_cnae[:2] == comp_cnae[:2]:
+                dims.append({
+                    "name": "exposição regulatória",
+                    "value": 0.5,
+                    "weight": W_REGULATORY,
+                    "points": W_REGULATORY * 0.5,
+                    "reason": f"mesma divisão CNAE ({user_cnae[:2]}xx)",
+                })
+
+    # D11 — trajectory similarity (era × porte × capital tier)
+    # Trajetórias parecidas ⇒ aprendizado mais transferível: empresa fundada
+    # em 2021 com capital seed e 12 funcionários se beneficia mais de outra
+    # com perfil semelhante do que de uma 2018 já com 200 pessoas.
+    try:
+        u_year = int(user.get("founded_year", "") or 0)
+        c_year = int(c.get("founded_year", "") or 0)
+    except (TypeError, ValueError):
+        u_year = c_year = 0
+    u_porte = _team_size_to_porte(user.get("team_size", ""))
+    c_porte = _porte_index(c.get("porte", ""))
+    # Fallback: candidato sem porte mas com headcount textual
+    if c_porte is None:
+        c_porte = _team_size_to_porte(c.get("headcount", ""))
+    u_cap = _funding_to_usd_tier(user.get("total_funding", ""))
+    c_cap = _funding_to_usd_tier(c.get("total_funding", ""))
+
+    # Conta quantas dimensões da trajetória estão definidas em ambos
+    components = []
+    if u_year and c_year:
+        components.append(("era", 1.0 - min(abs(u_year - c_year) / 5.0, 1.0)))
+    if u_porte is not None and c_porte is not None:
+        components.append(("porte", 1.0 - min(abs(u_porte - c_porte) / 3.0, 1.0)))
+    if u_cap is not None and c_cap is not None:
+        components.append(("capital", 1.0 - min(abs(u_cap - c_cap) / 4.0, 1.0)))
+    if len(components) >= 2:  # exige 2/3 componentes
+        val = sum(v for _, v in components) / len(components)
+        if val >= 0.5:
+            parts = ", ".join(f"{k}={v:.2f}" for k, v in components)
+            dims.append({
+                "name": "trajetória",
+                "value": val,
+                "weight": W_TRAJECTORY,
+                "points": W_TRAJECTORY * val,
+                "reason": f"perfil similar ({parts})",
+            })
 
     # Score base
     score = sum(d["points"] for d in dims)
@@ -2662,6 +2881,227 @@ def _fmt_outcome_line(outcomes: dict, total: int, label: str) -> str:
             f"incerto {u} ({pct(u)})")
 
 
+def _format_executive_summary(user: dict, ranked: list, stats: dict,
+                              meta: dict | None,
+                              diagnosis: dict | None) -> list[str]:
+    """Sumário executivo: bloco de 1 página antes do detalhe.
+
+    3 mensagens-chave + recomendação prioritária + 3 próximas ações +
+    confiança da análise. Templates condicionados pelos padrões já
+    detectados (signal direction, convergence, segment size, input quality)
+    — não chama LLM nem inferência nova.
+    """
+    L = []
+    sig = (diagnosis or {}).get("signal") or {}
+    direction = sig.get("direction", "")
+    delta_pp = sig.get("delta_dead_pct", 0.0) or 0.0
+    top_outs = (diagnosis or {}).get("top_outcomes", {}) or {}
+    seg_outs = (diagnosis or {}).get("seg_outcomes", {}) or {}
+    seg_size = (diagnosis or {}).get("segment_size", 0) or 0
+    top_total = sum(top_outs.values()) or 1
+    top_dead_pct = 100.0 * (top_outs.get("dead", 0)) / top_total
+    seg_dead_n = seg_outs.get("dead", 0)
+    seg_total = sum(seg_outs.values()) or 1
+    seg_dead_pct = 100.0 * seg_dead_n / seg_total
+    convergence_count = sum(1 for _, _, _, b in ranked[:10] if b.get("convergence"))
+
+    # ─── Veredito em 1 linha ────
+    if direction == "NEGATIVO":
+        emoji = "🔴"
+        verdict = "ALERTA — caminho convergindo com peers que MORRERAM"
+    elif direction == "POSITIVO":
+        emoji = "🟢"
+        verdict = "POSITIVO — caminho convergindo com peers que SOBREVIVERAM"
+    elif direction == "NEUTRO":
+        emoji = "⚪"
+        verdict = "NEUTRO — risco no padrão do segmento"
+    else:
+        emoji = "❔"
+        verdict = "Sinal insuficiente — adicione contexto pra melhorar"
+
+    L.append("=" * 72)
+    L.append(" SUMÁRIO EXECUTIVO")
+    L.append("=" * 72)
+    L.append(f"  {emoji} {verdict}")
+    if direction in {"NEGATIVO", "POSITIVO"}:
+        L.append(f"     {top_dead_pct:.0f}% dos seus top-{top_total} mortos vs "
+                 f"{seg_dead_pct:.0f}% do segmento  →  delta {delta_pp*100:+.0f}pp")
+    L.append("")
+
+    # ─── 3 mensagens-chave ────
+    L.append("  MENSAGENS-CHAVE")
+    msgs = []
+
+    # 1. Posição vs cohort
+    if seg_size >= 30 and direction:
+        if direction == "NEGATIVO":
+            msgs.append(f"Seu perfil casa estruturalmente com peers do segmento "
+                        f"(n={seg_size}); a taxa de morte deles é {seg_dead_pct:.0f}% "
+                        f"mas no seu top-{top_total} sobe para {top_dead_pct:.0f}%.")
+        elif direction == "POSITIVO":
+            msgs.append(f"Você está em pelotão favorável: peers do mesmo segmento "
+                        f"morrem {seg_dead_pct:.0f}%, e seu top-{top_total} reduz "
+                        f"isso pra {top_dead_pct:.0f}%.")
+        else:
+            msgs.append(f"Mortalidade do seu top-{top_total} ({top_dead_pct:.0f}%) "
+                        f"é comparável à do segmento ({seg_dead_pct:.0f}%).")
+    elif seg_size and seg_size < 30:
+        msgs.append(f"Segmento estatisticamente raso (n={seg_size}); leia o ranking "
+                    f"como hipótese, não como base sólida.")
+
+    # 2. Convergência estrutural
+    if convergence_count >= 3:
+        msgs.append(f"Convergência alta: {convergence_count} dos seus top-10 "
+                    f"batem em ≥4 dimensões (clones estruturais). Quando isso "
+                    f"acontece, a trajetória do peer #1 é o principal preditor.")
+    elif convergence_count == 0 and ranked:
+        msgs.append("Sem clones estruturais no top-10 — matches são parciais. "
+                    "O ranking é direcional; pares específicos exigem leitura humana.")
+
+    # 3. Confiança do input
+    quality = (meta or {}).get("quality", {}) or {}
+    input_trust = quality.get("input_trust") if isinstance(quality, dict) else None
+    if input_trust is not None and input_trust < 0.7:
+        msgs.append(f"Input enxuto (trust={input_trust:.1f}). Adicionar one-liner "
+                    f"mais detalhado, segmento e país pode mover scores em ±10pts.")
+
+    # 4. Cluster, se houver
+    cluster = (meta or {}).get("cluster") or (diagnosis or {}).get("cluster")
+    if isinstance(cluster, dict) and cluster.get("survival_rate") is not None:
+        s_rate = float(cluster["survival_rate"]) * 100
+        msgs.append(f"Cluster KMeans #{cluster.get('id','?')} "
+                    f"(n={cluster.get('size','?')}) tem sobrevivência de "
+                    f"{s_rate:.0f}%; é o seu pelotão visual no espaço de embeddings.")
+
+    if not msgs:
+        msgs.append("Não houve sinal forte para gerar mensagens — o relatório "
+                    "completo abaixo cobre as dimensões individuais.")
+    for i, m in enumerate(msgs[:4], 1):
+        # quebra em duas linhas se passar de 70 chars
+        if len(m) <= 70:
+            L.append(f"   {i}. {m}")
+        else:
+            words = m.split(" ")
+            line, lines = "", []
+            for w in words:
+                if len(line) + len(w) + 1 > 70:
+                    lines.append(line)
+                    line = w
+                else:
+                    line = (line + " " + w).strip()
+            if line:
+                lines.append(line)
+            L.append(f"   {i}. {lines[0]}")
+            for ln in lines[1:]:
+                L.append(f"      {ln}")
+    L.append("")
+
+    # ─── Recomendação prioritária ────
+    L.append("  RECOMENDAÇÃO PRIORITÁRIA (próximos 90 dias)")
+    if direction == "NEGATIVO" and convergence_count >= 3:
+        # Pega o clone estrutural #1 (top dimensão)
+        first_dead_clone = None
+        for s, score, c, b in ranked[:10]:
+            if b.get("convergence") and c.get("outcome") == "dead":
+                first_dead_clone = c
+                break
+        if first_dead_clone:
+            cause = first_dead_clone.get("failure_cause") or "não documentada"
+            yr = first_dead_clone.get("shutdown_year") or first_dead_clone.get("founded_year") or ""
+            country = first_dead_clone.get("country") or ""
+            L.append(f"   ⚠ Estude o post-mortem de \"{first_dead_clone.get('name','')}\" "
+                     f"({country}{', '+yr if yr else ''}, morta — {cause})")
+            L.append(f"     — esse é o caso mais próximo do que você pode evitar.")
+        else:
+            L.append("   ⚠ Caminho em alerta; reveja unit economics e dependências")
+            L.append("     antes de pivotar ou levantar capital.")
+    elif direction == "POSITIVO":
+        L.append("   ✓ Caminho favorável; foco deve ser EXECUÇÃO consistente, não")
+        L.append("     reposicionamento. Identifique 3 táticas dos sobreviventes")
+        L.append("     do seu cohort (bloco \"survivor terms\" abaixo) e replique.")
+    elif input_trust is not None and input_trust < 0.6:
+        L.append("   • Ampliar input antes de tomar decisão: descreva o produto em")
+        L.append("     1-2 parágrafos, declare modelo de negócio e país/região.")
+    else:
+        L.append("   • Use o ranking abaixo como input pra workshop de estratégia;")
+        L.append("     priorize ler post-mortems dos 3 primeiros mortos.")
+    L.append("")
+
+    # ─── Próximas 3 ações ────
+    L.append("  PRÓXIMAS 3 AÇÕES")
+    actions: list[str] = []
+
+    # Ação 1 — sempre o top-1
+    if ranked:
+        s1, _sc1, c1, _b1 = ranked[0]
+        c1_name = c1.get("name", "?")
+        c1_outcome = c1.get("outcome", "")
+        action_verb = "Ler post-mortem" if c1_outcome == "dead" else "Estudar trajetória"
+        actions.append(f"{action_verb} de \"{c1_name}\" — match #1 ({c1.get('country','')}, "
+                       f"{c1.get('founded_year','')}, {c1_outcome})")
+
+    # Ação 2 — survivor terms
+    surv = (diagnosis or {}).get("survivor_terms") or []
+    if surv:
+        top_terms = ", ".join(t for t, _, _ in surv[:3])
+        actions.append(f"Conferir se sua proposta cobre: {top_terms} — termos que "
+                       f"aparecem mais nos sobreviventes do seu segmento")
+
+    # Ação 3 — risco-chave
+    mc = user.get("main_concern", "")
+    if mc and stats.get("segment_matching_cause_count"):
+        n = stats["segment_matching_cause_count"]
+        actions.append(f"Mapear como mitigar \"{mc}\" — {n} empresa(s) do seu "
+                       f"segmento morreram exatamente por isso")
+    elif user.get("country") == "Brazil":
+        actions.append("Revisar exposição regulatória BR (BACEN/ANS/ANATEL "
+                       "conforme setor) — fonte recorrente de morte no corpus BR")
+    else:
+        actions.append("Comparar runway atual vs cohort: quanto seus peers "
+                       "tinham levantado neste estágio")
+
+    for i, a in enumerate(actions[:3], 1):
+        if len(a) <= 70:
+            L.append(f"   {i}. {a}")
+        else:
+            words = a.split(" ")
+            line, lines = "", []
+            for w in words:
+                if len(line) + len(w) + 1 > 70:
+                    lines.append(line)
+                    line = w
+                else:
+                    line = (line + " " + w).strip()
+            if line:
+                lines.append(line)
+            L.append(f"   {i}. {lines[0]}")
+            for ln in lines[1:]:
+                L.append(f"      {ln}")
+    L.append("")
+
+    # ─── Confiança ────
+    confidence_bits = []
+    if seg_size:
+        if seg_size >= 500:
+            confidence_bits.append(f"segmento robusto (n={seg_size})")
+        elif seg_size >= 50:
+            confidence_bits.append(f"segmento médio (n={seg_size})")
+        else:
+            confidence_bits.append(f"segmento raso (n={seg_size})")
+    if input_trust is not None:
+        if input_trust >= 0.8:
+            confidence_bits.append(f"input rico (trust={input_trust:.1f})")
+        elif input_trust >= 0.6:
+            confidence_bits.append(f"input médio (trust={input_trust:.1f})")
+        else:
+            confidence_bits.append(f"input enxuto (trust={input_trust:.1f})")
+    if confidence_bits:
+        L.append("  CONFIANÇA: " + " · ".join(confidence_bits))
+    L.append("")
+    L.append("=" * 72)
+    return L
+
+
 def format_report(user: dict, ranked: list, stats: dict,
                   meta: dict | None = None,
                   diagnosis: dict | None = None) -> str:
@@ -2670,6 +3110,16 @@ def format_report(user: dict, ranked: list, stats: dict,
     L.append(f" CONSULTORIA DE RISCO: {user.get('name','?')}")
     L.append(f" Gerada em: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     L.append("=" * 72)
+
+    # Sumário Executivo: vai antes de tudo (cliente lê primeiro o que importa)
+    try:
+        L.extend(_format_executive_summary(user, ranked, stats, meta, diagnosis))
+    except Exception as e:
+        # Se o sumário quebrar por dados ausentes, segue sem ele — não bloqueia
+        # o resto do relatório, que é o conteúdo histórico já estável.
+        log_msg = f"  (sumário executivo indisponível: {type(e).__name__})"
+        L.append("")
+        L.append(log_msg)
 
     # Alertas de confiabilidade ANTES dos dados — se o input é fraco ou tem
     # incoerência, o user precisa saber disso antes de ler o ranking.
