@@ -1729,6 +1729,9 @@ W_ERA           = 5
 W_NETWORK       = 8     # founders/investors em comum (Jaccard)
 W_REGULATORY    = 7     # mesmo regulador setorial OU mesma divisão CNAE (BR)
 W_TRAJECTORY    = 6     # distância em (era, porte, capital tier)
+# Fase 5 — ativação dos dados Phase 2-4 nas dimensões
+W_STACK         = 5     # github_languages overlap (tech companies)
+W_FINANCIAL_PROX = 5    # similar margin/leverage tier (listed companies)
 
 
 # ─── Helpers para dimensões Fase 3 ────────────────────────────────────────────
@@ -2141,6 +2144,49 @@ def score_company(user: dict, c: dict,
                 "weight": W_TRAJECTORY,
                 "points": W_TRAJECTORY * val,
                 "reason": f"perfil similar ({parts})",
+            })
+
+    # D12 — stack overlap (github_languages) — só dispara se ambos têm dados
+    user_stack = user.get("tech_stack") or user.get("github_languages") or []
+    user_stack_n = {(s or "").lower().strip() for s in user_stack if s}
+    comp_stack_n = {(s or "").lower().strip() for s in (c.get("github_languages") or []) if s}
+    if user_stack_n and comp_stack_n:
+        inter = user_stack_n & comp_stack_n
+        union = user_stack_n | comp_stack_n
+        if inter:
+            jacc = len(inter) / len(union) if union else 0.0
+            dims.append({
+                "name": "stack técnico",
+                "value": jacc,
+                "weight": W_STACK,
+                "points": W_STACK * jacc,
+                "reason": f"linguagens em comum: {', '.join(sorted(inter))}",
+            })
+
+    # D13 — financial proximity (margin + leverage tier) para listadas
+    # Só dispara quando candidato tem net_margin_pct_last (vem de
+    # scrape_cvm_financials). User precisa fornecer alguma proxy: declarar
+    # margem em notes/main_concern OU ter total_funding parsável que entra
+    # como ranger via _funding_to_usd_tier.
+    user_margin = None
+    if user.get("net_margin_pct"):
+        try:
+            user_margin = float(user["net_margin_pct"])
+        except (ValueError, TypeError):
+            pass
+    comp_margin = c.get("net_margin_pct_last")
+    if user_margin is not None and comp_margin is not None:
+        # Distância em pontos percentuais; aceitamos até 20pp como
+        # "próximo" (escala generosa porque margens variam muito por setor).
+        delta = abs(user_margin - comp_margin)
+        if delta < 20:
+            val = 1.0 - (delta / 20.0)
+            dims.append({
+                "name": "saúde financeira",
+                "value": val,
+                "weight": W_FINANCIAL_PROX,
+                "points": W_FINANCIAL_PROX * val,
+                "reason": f"margem similar (você {user_margin:.1f}% vs candidato {comp_margin:.1f}%)",
             })
 
     # Score base
@@ -2848,6 +2894,53 @@ def format_match_block(rank_n: int, score: float, c: dict, dims: list, bundle: d
         tag_c = f" ({conf})" if conf and conf != "documented" else ""
         L.append(f"      Motivo: {c['failure_cause']}{tag_c}")
 
+    # Sinais Phase 2-4 — badges visuais quando os dados existem.
+    # Cada badge é independente, fica oculto quando o dado é None/vazio.
+    badges: list[str] = []
+    if c.get("has_active_sanction"):
+        n_sanc = len(c.get("sanctions") or [])
+        badges.append(f"⚠ SANÇÃO CGU ATIVA ({n_sanc})")
+    ras = c.get("reclame_aqui_score")
+    if ras is not None:
+        if ras >= 8.0:
+            badges.append(f"😀 ReclameAqui {ras:.1f}/10")
+        elif ras < 5.0:
+            badges.append(f"😠 ReclameAqui {ras:.1f}/10")
+        else:
+            badges.append(f"ReclameAqui {ras:.1f}/10")
+    nmc = c.get("news_mention_count_12m")
+    nt = c.get("news_tone_12m")
+    if nmc and nmc > 0:
+        if nt is not None and nt < -0.15:
+            badges.append(f"📰 {nmc} mentions · tone {nt:+.2f} (negativo)")
+        elif nt is not None and nt > 0.15:
+            badges.append(f"📰 {nmc} mentions · tone {nt:+.2f} (positivo)")
+        else:
+            badges.append(f"📰 {nmc} mentions")
+    if c.get("revenue_last"):
+        margin = c.get("net_margin_pct_last")
+        if margin is not None:
+            badges.append(f"💰 receita {c['revenue_last']} · margem {margin:.1f}%")
+        else:
+            badges.append(f"💰 receita {c['revenue_last']}")
+    if c.get("github_stars_total") and c["github_stars_total"] > 100:
+        langs = ", ".join(c.get("github_languages") or [])[:30]
+        badges.append(f"⭐ github {c['github_stars_total']} stars" + (f" · {langs}" if langs else ""))
+    if c.get("domain_age_years"):
+        try:
+            age = int(c["domain_age_years"])
+            if age >= 5:
+                badges.append(f"🌐 domínio com {age} anos no Wayback")
+        except (TypeError, ValueError):
+            pass
+    if c.get("cade_act_count") and c["cade_act_count"] > 0:
+        badges.append(f"⚖ CADE: {c['cade_act_count']} ato(s)")
+    if badges:
+        # Quebra em linhas pra não estourar terminal
+        for i in range(0, len(badges), 2):
+            chunk = "  ".join(badges[i:i+2])
+            L.append(f"      {chunk}")
+
     # dimensões que dispararam — checklist visual
     L.append(f"      Dimensões casadas ({bundle['total_dims']}):")
     for d in dims:
@@ -2879,6 +2972,92 @@ def _fmt_outcome_line(outcomes: dict, total: int, label: str) -> str:
             f"adquiridas {a} ({pct(a)}) · "
             f"operando {o} ({pct(o)}) · "
             f"incerto {u} ({pct(u)})")
+
+
+# ─── Funding rounds parser ───────────────────────────────────────────────────
+# Extrai sequência de rounds estruturados a partir de texto livre. Útil pra
+# converter `total_funding`, `notes` e `post_mortem` em uma timeline que vira
+# input pro futuro D14 trajectory dim e pro relatório (cohort de funding).
+
+_ROUND_TYPE_PATTERN = re.compile(
+    r"\b(pre[-\s]?seed|seed|series\s+[A-Z]|series-[A-Z]|s[eé]rie\s+[A-Z]|"
+    r"angel|bridge|ipo|crowdfunding|debt|grant|convertible|safe)\b",
+    re.IGNORECASE,
+)
+_AMOUNT_PATTERN = re.compile(
+    r"(?:US\$|USD|R\$|BRL|EUR|GBP|\$)\s*([\d,.]+)\s*([KMB]i?(?:llion|i)?)?\b",
+    re.IGNORECASE,
+)
+_YEAR_NEAR_PATTERN = re.compile(r"\b(19\d{2}|20\d{2})\b")
+_INVESTOR_LIST_PATTERN = re.compile(
+    r"(?:led by|liderado por|liderada por|backed by|investidores?|com\s+)\s+([^.;\n]{3,200})",
+    re.IGNORECASE,
+)
+
+
+def parse_funding_rounds(*texts: str) -> list[dict]:
+    """Extrai rounds a partir de N campos textuais. Retorna lista ordenada
+    por ano (ascendente quando ano detectado).
+
+    Cada round: {round_type, amount_text, amount_usd_tier, year, investors,
+                 evidence_snippet}.
+
+    A heurística é deliberadamente conservadora — quer um sinal limpo, não
+    100% recall. Quando não dá pra inferir round type, retorna entrada
+    com type="unknown_round".
+    """
+    out: list[dict] = []
+    seen_evidence: set[str] = set()
+    joined = " ".join(t for t in texts if t)
+    if not joined:
+        return out
+
+    # Quebra em sentenças que mencionam $/R$/USD/BRL — prováveis rounds
+    sentences = re.split(r"(?<=[.;\n])", joined)
+    for sent in sentences:
+        sent = sent.strip()
+        if len(sent) < 8:
+            continue
+        m_amt = _AMOUNT_PATTERN.search(sent)
+        if not m_amt:
+            continue
+        amount_text = m_amt.group(0).strip()
+        # Tier
+        tier = _funding_to_usd_tier(amount_text)
+        # Round type
+        m_type = _ROUND_TYPE_PATTERN.search(sent)
+        round_type = (m_type.group(1).lower().replace("-", " ").strip()
+                      if m_type else "unknown_round")
+        # Year
+        m_year = _YEAR_NEAR_PATTERN.search(sent)
+        year = m_year.group(1) if m_year else ""
+        # Investors
+        m_inv = _INVESTOR_LIST_PATTERN.search(sent)
+        investors = []
+        if m_inv:
+            raw = m_inv.group(1)
+            investors = [
+                p.strip() for p in re.split(r",|&| and | e ", raw)
+                if 2 < len(p.strip()) < 60
+            ][:6]
+
+        evidence = sent[:200]
+        if evidence in seen_evidence:
+            continue
+        seen_evidence.add(evidence)
+
+        out.append({
+            "round_type": round_type,
+            "amount_text": amount_text,
+            "amount_usd_tier": tier,
+            "year": year,
+            "investors": investors,
+            "evidence_snippet": evidence,
+        })
+
+    # Ordena por ano quando definido, mantém ordem original quando não
+    out.sort(key=lambda r: (r["year"] or "9999", r.get("amount_usd_tier") or 0))
+    return out
 
 
 # ─── Stress scenarios ────────────────────────────────────────────────────────

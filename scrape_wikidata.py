@@ -341,6 +341,9 @@ _SCALAR_FIELDS_MERGE = (
     "financial_leverage_last",
     "fiscal_year_end",
     "has_active_sanction",
+    # Fase 5 — IP/Brand
+    "inpi_marks_active",
+    "inpi_marks_total",
 )
 
 # Campos lista que recebem união (case-insensitive em strings)
@@ -355,6 +358,8 @@ _LIST_FIELDS_MERGE = (
     "github_languages",
     "cade_acts",
     "sanctions",
+    "inpi_classes",
+    "funding_rounds",
 )
 
 

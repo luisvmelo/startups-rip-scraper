@@ -49,16 +49,19 @@ REPORT_PATH = os.path.join(OUTPUT_DIR, "eval_report.json")
 
 EXAMPLE_GROUND_TRUTH = {
     "_meta": {
-        "description": "Preencha 'cases' com 20-30 entradas. Veja EXAMPLE_CASE abaixo.",
-        "last_updated": "YYYY-MM-DD",
-        "notes": "Cada caso: query (input), expected (lista de normalize_name)."
+        "description": "Casos seed do eval harness. Edite/expanda para 20-30. "
+                       "Cada caso = (query, expected_norms, rationale).",
+        "last_updated": "2026-05-06",
+        "notes": "expected é lista de `norm` (nome normalizado: lowercase + "
+                 "sem sufixos societários + hífen). Use cb.normalize_name() "
+                 "se precisar gerar à mão. Veja docs/EXAMPLES.md."
     },
     "cases": [
         {
-            "id": "example-01",
+            "id": "br-fintech-pre-seed-01",
             "query": {
                 "name": "Fibbo",
-                "one_liner": "Conta digital com cashback para freelancers brasileiros",
+                "one_liner": "conta digital com cashback para freelancers brasileiros",
                 "description": "Conta + cartão pré-pago + emissão MEI para autônomos BR. B2C.",
                 "categories": ["Fintech", "Payments"],
                 "business_model": "B2C",
@@ -67,13 +70,159 @@ EXAMPLE_GROUND_TRUTH = {
                 "stage": "Pre-seed",
                 "main_concern": "No Market Need"
             },
-            "expected": [
-                "cora",
-                "conta-simples",
-                "tagg",
-                "beblue"
-            ],
-            "rationale": "Cora/Conta Simples: mesmo cliente (autônomo BR, conta+cartão). Tagg: morta, mesmo perfil. Beblue: adquirida, cashback-first."
+            "expected": ["cora", "conta-simples", "tagg", "beblue"],
+            "rationale": "Cora/Conta Simples: mesmo cliente (autônomo BR, "
+                         "conta+cartão). Tagg: morta, mesmo perfil. Beblue: "
+                         "adquirida, cashback-first."
+        },
+        {
+            "id": "br-fintech-payments-seed-02",
+            "query": {
+                "name": "Nexia Pay",
+                "one_liner": "antecipação de recebíveis para lojistas via PIX",
+                "categories": ["Fintech", "Payments"],
+                "business_model": "SaaS",
+                "country": "Brazil",
+                "founded_year": "2023",
+                "stage": "seed",
+                "main_concern": "Unit Economics",
+                "secondary_concerns": ["Regulatory Risk"],
+                "total_funding": "BRL 4M"
+            },
+            "expected": ["drip", "malga", "transfeera", "bemobi-pagamentos"],
+            "rationale": "Drip: BR fintech morta com mesmo perfil. Malga: "
+                         "infra de payments BR operando (caso contrário). "
+                         "Transfeera/Bemobi: payments BR adjacentes."
+        },
+        {
+            "id": "br-healthtech-medio-03",
+            "query": {
+                "name": "Sano Saude",
+                "one_liner": "telemedicina + clínica híbrida para PMEs",
+                "categories": ["Healthtech", "Telemedicina"],
+                "business_model": "B2B2C",
+                "country": "Brazil",
+                "founded_year": "2020",
+                "stage": "Series A",
+                "main_concern": "Bad Business Model"
+            },
+            "expected": ["dr-consulta", "memed", "alice", "conexa-saude"],
+            "rationale": "Dr. Consulta/Alice: healthtech BR ativo. Memed: "
+                         "infra. Conexa: telemedicina + clínica."
+        },
+        {
+            "id": "us-yc-saas-mortas-04",
+            "query": {
+                "name": "Acme Notes",
+                "one_liner": "AI-powered note taking app for knowledge workers",
+                "categories": ["AI", "Productivity"],
+                "business_model": "SaaS",
+                "country": "United States",
+                "founded_year": "2022",
+                "stage": "Pre-seed",
+                "main_concern": "No Market Need"
+            },
+            "expected": ["mem", "rewind", "reflect"],
+            "rationale": "Mem: AI notetaking, captou bem mas struggle. "
+                         "Rewind/Reflect: peer ativos."
+        },
+        {
+            "id": "br-edtech-mortas-05",
+            "query": {
+                "name": "EduPath",
+                "one_liner": "marketplace de cursos online B2C",
+                "categories": ["Edtech", "Marketplace"],
+                "business_model": "B2C",
+                "country": "Brazil",
+                "founded_year": "2018",
+                "stage": "Series B",
+                "main_concern": "Competition"
+            },
+            "expected": ["hotmart", "eadbox", "afya"],
+            "rationale": "Hotmart: gigante BR edtech. EADBox: morta. Afya: "
+                         "consolidador edtech BR (M&A serial)."
+        },
+        {
+            "id": "br-energia-aneel-06",
+            "query": {
+                "name": "EnerVerde",
+                "one_liner": "comercializadora de energia limpa para indústria",
+                "categories": ["Energia", "Cleantech"],
+                "business_model": "B2B",
+                "country": "Brazil",
+                "founded_year": "2019",
+                "stage": "Series A",
+                "main_concern": "Regulatory Risk"
+            },
+            "expected": ["matrix-energia", "comerc-energia", "auren-energia"],
+            "rationale": "Matrix/Comerc: comercializadoras BR ANEEL. Auren: "
+                         "geradora listada peer."
+        },
+        {
+            "id": "us-failory-mortas-saas-07",
+            "query": {
+                "name": "Lumora",
+                "one_liner": "vertical SaaS for boutique restaurants — POS + inventory",
+                "categories": ["SaaS", "Restaurants", "Vertical SaaS"],
+                "business_model": "SaaS",
+                "country": "United States",
+                "founded_year": "2017",
+                "stage": "Series A",
+                "main_concern": "Lack of Funds"
+            },
+            "expected": ["partender", "mealos", "wisely"],
+            "rationale": "Partender (Failory): bar inventory morto. "
+                         "Mealos/Wisely: restaurant SaaS adjacentes."
+        },
+        {
+            "id": "br-agro-08",
+            "query": {
+                "name": "Solo Forte",
+                "one_liner": "marketplace de insumos agrícolas via fintech",
+                "categories": ["Agritech", "Marketplace", "Fintech"],
+                "business_model": "Marketplace",
+                "country": "Brazil",
+                "founded_year": "2020",
+                "stage": "Series A",
+                "main_concern": "Bad Market Fit"
+            },
+            "expected": ["agrofy", "agroinvest", "tarvos"],
+            "rationale": "Agrofy: marketplace agro BR. AgroInvest: agro "
+                         "fintech. Tarvos: insumos BR."
+        },
+        {
+            "id": "global-web3-mortas-09",
+            "query": {
+                "name": "ChainBridge",
+                "one_liner": "cross-chain DEX aggregator with NFT yield",
+                "categories": ["Web3", "Crypto", "DeFi"],
+                "business_model": "Marketplace",
+                "country": "United States",
+                "founded_year": "2021",
+                "stage": "Seed",
+                "main_concern": "No Market Need",
+                "secondary_concerns": ["Legal Challenges"]
+            },
+            "expected": ["squid", "celsius", "voyager-digital"],
+            "rationale": "Squid: rug-pull crypto. Celsius/Voyager: lending "
+                         "crypto colapsado."
+        },
+        {
+            "id": "br-anvisa-farma-10",
+            "query": {
+                "name": "FarmaBR",
+                "one_liner": "marketplace de medicamentos genéricos com prescrição",
+                "categories": ["Healthtech", "Pharma", "Marketplace"],
+                "business_model": "Marketplace",
+                "country": "Brazil",
+                "founded_year": "2019",
+                "stage": "Series B",
+                "main_concern": "Competition"
+            },
+            "expected": ["consulta-remedios", "drogaraia", "ame-digital",
+                         "vitat"],
+            "rationale": "Consulta Remédios + Drogaraia: peers BR farma. "
+                         "AME Digital/Vitat: healthtech adjacente."
         }
     ]
 }
