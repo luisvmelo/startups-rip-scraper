@@ -51,24 +51,62 @@ Definida em [scrape_multi_sources.py:111](../scrape_multi_sources.py#L111). Camp
 
 Construído em [build_corpus_graph.py](../build_corpus_graph.py) a partir do corpus enriched. Tipos de nó e relações:
 
-**Nós**
+**Nós** (atualizado pós-Phase 6 — promoção de entidades a vértices)
+
+Vocabulário base (Phase 0):
 - `company` — vértice principal (uma linha por empresa canônica).
-- `person` — founder/investor mencionado.
-- `category` — macro-segmento (`finance`, `software`, `ai`, ...).
-- `location` — cidade ou país.
-- `status` — bucket de outcome.
+- `person` — fundador, sócio (QSA), investidor.
+- `category` — tag livre vinda das fontes (ex: "Fintech").
+- `macro` — macro-segmento derivado (ex: `finance`, `software`, `ai`).
+- `location` — texto livre (cidade/UF/país).
+- `status` — Active/Inactive/...
+- `outcome` — operating/acquired/dead/distressed/dormant/unknown.
 - `yc_batch` — `W21`, `S19`, etc.
-- `acquirer` — empresa que comprou (pode ou não ser também um `company` do corpus).
+- `data_source` — qual scraper aportou (yc, wikidata, cvm, ...).
+- `acquirer` — comprador (resolve para `company` do corpus quando bate `norm`).
+- `competitor` — concorrente declarado (não inferido).
+- `site` — vértice raiz `SITE:corpus`.
+
+Vocabulário expandido (Phases 1-5 promovidos):
+- `regulator` — BACEN / ANS / ANEEL / ANATEL / ANVISA / CVM (Phase 1+4).
+- `cnae_division` — divisão CNAE 2 dígitos (Phase 1).
+- `cade_act` — ato de concentração julgado (Phase 3).
+- `sanction` — sanção CGU CEIS/CNEP (Phase 4).
+- `funding_round` — captação estruturada com investidores ligados (Phase 5).
+- `inpi_class` — classe Nice de marca registrada (Phase 5).
+- `language` — linguagem GitHub (Phase 2).
 
 **Arestas (persistidas)**
+Estruturais clássicas:
 - `IN_CATEGORY` — company → category
+- `HAS_CATEGORY_MACRO` — company → macro
 - `LOCATED_IN` — company → location
-- `HAS_STATUS` — company → status
-- `FOUNDED` / `HAS_FOUNDER` — person ↔ company
-- `HAS_INVESTOR` / `INVESTED_IN` — person/fund ↔ company
-- `ACQUIRED_BY` — company → acquirer
+- `HAS_STATUS` / `HAS_OUTCOME` — company → status / outcome
 - `IN_BATCH` — company → yc_batch
-- `COMPETES_WITH` — company ↔ company (vem das fontes; **não é inferido**)
+- `FROM_SOURCE` — company → data_source
+- `FOUNDED` / `HAS_FOUNDER` — person ↔ company (founders + qsa)
+- `INVESTED_IN` / `HAS_INVESTOR` — person ↔ company
+- `ACQUIRED` / `ACQUIRED_BY` — acquirer (ou company do corpus) ↔ company
+- `COMPETES_WITH` — company → competitor (vem das fontes; **não é inferido**)
+- `FOLLOWED_BY` — yc_batch → yc_batch (sequência temporal)
+
+Estruturais Phase 1-5:
+- `REGULATED_BY` — company → regulator (com `status` opcional na aresta)
+- `IN_CNAE_DIVISION` — company → cnae_division
+- `INVOLVED_IN_CADE` — company → cade_act
+- `SANCTIONED_BY` — company → sanction
+- `RAISED_IN_ROUND` — company → funding_round
+- `PARTICIPATED_IN` — person → funding_round (investidor de um round)
+- `HAS_INPI_CLASS` — company → inpi_class
+- `USES_LANGUAGE` — company → language
+
+Esse grafo expandido habilita perguntas tipo:
+- "todas as fintechs reguladas pelo BACEN que compartilham investidor com X"
+- "rounds em que Kaszek e Monashees co-investiram nos últimos 24 meses"
+- "empresas com sanção CEIS ativa que aparecem em atos do CADE"
+- "comunidades de empresas que usam a mesma linguagem GitHub"
+
+— tudo via traversal puro, sem precisar reabrir os JSONs originais.
 
 **Não são persistidas** as arestas de similaridade (texto, categoria, geografia). Essas são calculadas sob demanda no runtime — ver §4.
 
