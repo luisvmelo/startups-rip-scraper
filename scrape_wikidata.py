@@ -332,6 +332,15 @@ _SCALAR_FIELDS_MERGE = (
     "cade_act_count",
     "news_mention_count_12m",
     "news_tone_12m",
+    # Fase 4 — Financials + Sanctions
+    "revenue_last",
+    "net_income_last",
+    "total_assets_last",
+    "shareholders_equity_last",
+    "net_margin_pct_last",
+    "financial_leverage_last",
+    "fiscal_year_end",
+    "has_active_sanction",
 )
 
 # Campos lista que recebem união (case-insensitive em strings)
@@ -345,6 +354,7 @@ _LIST_FIELDS_MERGE = (
     "qsa",
     "github_languages",
     "cade_acts",
+    "sanctions",
 )
 
 

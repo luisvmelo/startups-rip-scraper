@@ -241,7 +241,31 @@ Catálogo das fontes que compõem o corpus. Cada entrada documenta **o que é**,
 
 ---
 
-## 21. Curate BR Famous Deaths (manual)
+## 21. CVM DFP/ITR — Financials de Listadas BR (Fase 4)
+
+- **O que é** — Demonstrações Financeiras Padronizadas (anuais) e Informações Trimestrais entregues por toda companhia aberta BR à CVM. Inclui DRE (receita, custo, lucro), BPA (ativo), BPP (passivo, PL), DFC (caixa).
+- **Licença / ToS** — Dados abertos federais (`dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/`).
+- **Como coleta** — [scrape_cvm_financials.py](../scrape_cvm_financials.py). Para o ano-alvo (default: ano passado), baixa ZIPs por categoria contábil (DRE/BPA/BPP), parseia rows com `ORDEM_EXERC=ÚLTIMO`, extrai contas-chave por código IFRS-BR (3.01 receita líquida, 3.11 lucro líquido, 1 ativo total, 2.03 patrimônio líquido) e monta payload por CNPJ. ESCALA do CVM (1=unidade, 1000=milhar) é respeitada.
+- **Schema resultante** — `revenue_last`, `net_income_last`, `total_assets_last`, `shareholders_equity_last`, `net_margin_pct_last`, `financial_leverage_last`, `fiscal_year_end`. Description ganha resumo.
+- **Volume** — ~430 listadas BR por ano com pelo menos uma conta extraída.
+- **Valor agregado** — primeiros **financials reais** no corpus (até aqui só tínhamos `total_funding` texto e `capital_social` proxy). Habilita comparação de margem, alavancagem e tamanho real.
+- **Última verificação** — 2026-05.
+
+---
+
+## 22. CEIS / CNEP — Sanções Administrativas BR (Fase 4)
+
+- **O que é** — Cadastros oficiais da CGU (Controladoria-Geral da União): **CEIS** = Cadastro de Empresas Inidôneas e Suspensas (sanções aplicadas pela administração pública); **CNEP** = Cadastro Nacional de Empresas Punidas (Lei Anticorrupção 12.846).
+- **Licença / ToS** — Dados abertos federais (Portal da Transparência); uso público.
+- **Como coleta** — [scrape_ceis_cnep.py](../scrape_ceis_cnep.py). Tenta baixar pacotes ZIP mensais dos últimos 12 meses até encontrar o snapshot mais recente disponível (`portaldatransparencia.gov.br/download-de-dados/{ceis,cnep}/{YYYYMM}`). Agrega por CNPJ; cada empresa fica com lista `sanctions` + flag `has_active_sanction` (True quando data fim ainda não passou ou é vazia).
+- **Schema resultante** — `sanctions: list[dict]` com `{origin, fundamento, orgao, data_inicio, data_fim, active}`; `has_active_sanction: bool`. Outcome muda para `distressed` se houver sanção ativa.
+- **Volume** — ~30k empresas em CEIS+CNEP cumulativo; subset com sanção ativa varia.
+- **Valor agregado** — sinal de **risco reputacional/legal** ortogonal aos outros. Usado especialmente em due diligence de fornecedor ou parceiro de governo.
+- **Última verificação** — 2026-05.
+
+---
+
+## 23. Curate BR Famous Deaths (manual)
 
 - **O que é** — [curate_br_famous_deaths.py](../curate_br_famous_deaths.py). Lista **curada manualmente** de startups brasileiras conhecidas que morreram (Easy Taxi, Peixe Urbano era BR, Movile, etc.) com fonte/citação em cada entrada.
 - **Licença / ToS** — Texto próprio + citações de reportagens (fair use).
@@ -289,6 +313,10 @@ GITHUB_TOKEN=ghp_xxx python scrape_github.py --tech-only --skip-existing
 # Brasil + Global — Fase 3 (M&A oficial + news/tone)
 python scrape_cade.py                                   # atos de concentração BR
 python scrape_gdelt.py --br-only --skip-existing        # mentions + tone
+
+# Brasil — Fase 4 (financials + sanctions)
+python scrape_cvm_financials.py                         # DFP/ITR de listadas BR
+python scrape_ceis_cnep.py                              # sanções CGU (CEIS+CNEP)
 
 # Consolidação final + recompute analytics
 python scrape_multi_sources.py

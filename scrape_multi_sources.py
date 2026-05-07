@@ -171,6 +171,16 @@ class MSCompany:
     cade_act_count: int = 0
     news_mention_count_12m: int | None = None            # GDELT ArtList volume
     news_tone_12m: float | None = None                   # média -1..+1
+    # Fase 4 — Financials de listadas (CVM DFP/ITR) + Sanções (CGU)
+    revenue_last: str = ""                # ex: "BRL 1.20B"
+    net_income_last: str = ""
+    total_assets_last: str = ""
+    shareholders_equity_last: str = ""
+    net_margin_pct_last: float | None = None
+    financial_leverage_last: float | None = None         # ativo / patrimônio líquido
+    fiscal_year_end: str = ""             # data do exercício extraído
+    sanctions: list = field(default_factory=list)        # CEIS/CNEP da CGU
+    has_active_sanction: bool = False
     # Provenance por campo: {"description": [{"source":"failory","value":"..."}]}
     provenance: dict = field(default_factory=dict)
     # Raw record por fonte (preserva tudo sem remodelar)

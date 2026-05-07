@@ -2881,6 +2881,137 @@ def _fmt_outcome_line(outcomes: dict, total: int, label: str) -> str:
             f"incerto {u} ({pct(u)})")
 
 
+# ─── Stress scenarios ────────────────────────────────────────────────────────
+# Pares (cenário, condição → estimativa de impacto). Templates condicionados
+# por macros do user. Não é simulação numérica fina — é heurística de
+# exposição: "se Selic +200bp, peers do seu cohort dependentes de juros
+# sofrem N% mais". O número de impacto vem de regras + tamanho do cohort
+# correspondente no corpus, não de modelagem econométrica.
+
+_STRESS_SCENARIOS_BY_MACRO = {
+    "finance": [
+        ("Selic +200bp", "fintechs com modelo de crédito ou yield farming",
+         "alta", "modelos de crédito/securitização ficam mais caros; "
+                "neobanks com receita de yield perdem margem; "
+                "investidores priorizam empresas já lucrativas"),
+        ("BACEN regulamenta tokenização ou DREX em produção", "fintechs cripto/web3",
+         "alta", "barreira de entrada sobe; vencedores incumbentes; "
+                "exit por aquisição vira mais provável que IPO"),
+        ("Real desvaloriza 15-20%", "fintechs com captação USD",
+         "média", "rounds em dólar viram menos eficientes em runway BRL; "
+                "investidores externos aplicam desconto FX no valuation"),
+    ],
+    "health": [
+        ("ANS reajusta teto de mensalidade abaixo da inflação médica",
+         "operadoras de saúde",
+         "alta", "compressão de margem em planos individuais; "
+                "operadoras pequenas/dependentes de individuais sangram"),
+        ("Genéricos avançam 10pp de share", "farmacêuticas com marca",
+         "média", "guerra de preço em prescrição; players sem genérico próprio "
+                "perdem participação"),
+        ("Telemedicina passa a exigir presencial inicial", "healthtechs digitais",
+         "alta", "modelo full-digital perde conversão; lock-in com clínicas "
+                "físicas vira moat"),
+    ],
+    "media": [
+        ("ANATEL reajusta espectro ou taxa de licenciamento",
+         "ISPs e provedores SCM",
+         "média", "OPEX sobe; provedores regionais sem escala consolidam"),
+        ("Streaming sofre nova taxação de conteúdo nacional",
+         "plataformas de streaming",
+         "média", "precificação repassada; churn aumenta em camadas baratas"),
+    ],
+    "ecommerce": [
+        ("Imposto de importação dobra (Programa Mover ou similar)",
+         "marketplaces dependentes de Shein/Aliexpress",
+         "alta", "preço final sobe 30-40%; consumidor migra para varejo nacional"),
+        ("Real desvaloriza 15-20%", "e-commerces com sourcing internacional",
+         "alta", "margem comprimida; players locais ganham vantagem"),
+    ],
+    "transport": [
+        ("Diesel/combustível +20%", "logística rodoviária",
+         "alta", "frete sobe; players sem repasse contratual têm margem zerada"),
+        ("Lei do motorista de aplicativo aprovada (vínculo CLT parcial)",
+         "marketplaces de mobilidade/delivery",
+         "alta", "custo unitário sobe 25-40%; modelo de gig economy puro inviável"),
+    ],
+    "sustainability": [
+        ("Bolsonaro-style rollback regulatório climático",
+         "projetos verdes dependentes de subsídio",
+         "alta", "incentivos cortados; greentechs early-stage sofrem; "
+                "M&A defensivo se acelera"),
+        ("Mercado regulado de carbono entra em vigor",
+         "empresas com emissões altas",
+         "alta", "compradores forçados de crédito; sustentabilidade vira CAPEX"),
+    ],
+    "real_estate": [
+        ("Selic +200bp", "construtoras e proptechs de financiamento",
+         "alta", "demanda residencial cai; construtoras alavancadas sofrem; "
+                "marketplaces de aluguel ganham porque compra fica inviável"),
+    ],
+    "agriculture": [
+        ("Real desvaloriza 15-20%", "exportadoras agro",
+         "média positiva", "receita em USD sobe em BRL; lucros recordes; "
+                          "incentivo a expandir produção"),
+        ("China reduz importação de commodities BR",
+         "agro exportador",
+         "alta", "preço de soja/milho cai; pequenos produtores quebram primeiro"),
+    ],
+}
+
+
+def _format_stress_scenarios(user: dict, stats: dict) -> list[str]:
+    """Bloco WHAT-IF: cenários de stress aplicáveis ao macro do user.
+
+    Filtra cenários cujos macros casam com o user; lista 3-5 mais relevantes
+    com nível de impacto e mecanismo. Não tenta dar número fino — é mapa
+    de exposição, e mostrar isso explicitamente desarma falso senso de precisão.
+    """
+    L = []
+    user_macros = user.get("_macros") or categories_to_macros(user.get("categories", []))
+    if not user_macros:
+        return L
+
+    relevant: list[tuple[str, str, str, str, str]] = []
+    for macro in user_macros:
+        for cenario, contexto, impact, mecanismo in _STRESS_SCENARIOS_BY_MACRO.get(macro, []):
+            relevant.append((macro, cenario, contexto, impact, mecanismo))
+
+    if not relevant:
+        return L
+
+    # Dedup por cenário (alguns cenários valem pra múltiplos macros)
+    seen = set()
+    deduped = []
+    for row in relevant:
+        key = row[1]
+        if key not in seen:
+            seen.add(key)
+            deduped.append(row)
+    deduped = deduped[:6]
+
+    L.append("-- CENÁRIOS DE STRESS APLICÁVEIS AO SEU PERFIL --")
+    L.append("  (mapa de exposição condicional, não previsão de probabilidade)")
+    for macro, cenario, contexto, impact, mecanismo in deduped:
+        # quebra mecanismo em 2 linhas se passar de 65 chars
+        L.append("")
+        L.append(f"  [{impact.upper():>15s}]  {cenario}")
+        L.append(f"     → afeta: {contexto}")
+        words = mecanismo.split(" ")
+        line, lines = "", []
+        for w in words:
+            if len(line) + len(w) + 1 > 65:
+                lines.append(line); line = w
+            else:
+                line = (line + " " + w).strip()
+        if line:
+            lines.append(line)
+        for ln in lines:
+            L.append(f"     mecânica: {ln}" if ln == lines[0] else f"               {ln}")
+    L.append("")
+    return L
+
+
 def _format_executive_summary(user: dict, ranked: list, stats: dict,
                               meta: dict | None,
                               diagnosis: dict | None) -> list[str]:
@@ -3225,6 +3356,14 @@ def format_report(user: dict, ranked: list, stats: dict,
             L.append(f"    {terms_str}")
             L.append("    (idem, lado inverso — pistas de padrões que precederam falência)")
         L.append("")
+
+    # --- Stress scenarios (Fase 4) ---
+    try:
+        stress_lines = _format_stress_scenarios(user, stats)
+        if stress_lines:
+            L.extend(stress_lines)
+    except Exception as e:
+        L.append(f"  (cenários de stress indisponíveis: {type(e).__name__})")
 
     # --- Top matches ---
     has_clone = any(b["convergence"] for _, _, _, b in ranked[:10])
