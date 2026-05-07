@@ -1575,6 +1575,21 @@ def enrich_companies(force: bool = False) -> list[dict]:
                 c["rich_narrative"] = narrative[:20000]
                 pulled_narrative += 1
 
+        # Phase 7 fix — popula funding_rounds estruturado a partir de campos
+        # textuais. Sem essa chamada, o parser parse_funding_rounds (Phase 5)
+        # nunca rodava e o campo ficava vazio em produção, deixando os
+        # vértices FUNDING_ROUND da Phase 6 sem dado pra criar.
+        # Só reescreve se ainda não veio populado de uma fonte estruturada.
+        if not c.get("funding_rounds"):
+            c["funding_rounds"] = parse_funding_rounds(
+                c.get("total_funding", ""),
+                c.get("post_mortem", ""),
+                c.get("rich_narrative", ""),
+                c.get("description", ""),
+                c.get("one_liner", ""),
+                c.get("notes", ""),
+            )
+
         if c.get("failure_cause"):
             c["failure_cause_confidence"] = "documented"
             continue
